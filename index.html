@@ -369,6 +369,9 @@ function newBillsForMe(){
 }
 
 /* ---------- telas ---------- */
+function viewRetry(){
+  return '<div class="screen fade" style="padding-top:20vh;text-align:center"><h1 style="font-size:26px">Sem conexão com a casa</h1><p class="muted" style="margin:10px 0 22px">Não consegui abrir as contas agora. Seus dados continuam salvos. Verifique a internet e tente de novo.</p><div class="stack"><button class="btn block" data-act="retry">Tentar de novo</button><button class="btn ghost block" data-act="forget">Entrar com outro código</button></div></div>';
+}
 function viewWelcome(){
   return '<div class="welcome fade"><div class="inner"><div class="logo"><svg class="ic" viewBox="0 0 24 24" style="width:34px;height:34px;stroke-width:1.7"><path d="M3 11 12 3l9 8v10H3z"/><path d="M9 15.5c.8.9 1.8 1.3 3 1.3 1.4 0 2.3-.6 2.3-1.6 0-2.2-5-.9-5-3.3 0-1 .9-1.7 2.4-1.7 1 0 1.8.3 2.4.9"/></svg></div>'+
     '<h1>Racha Casa</h1><p>As contas da casa divididas sem confusão. Suba a notinha e todo mundo vê quanto deve.</p></div>'+
@@ -376,7 +379,7 @@ function viewWelcome(){
     '<button class="btn" data-act="go" data-s="create">Criar uma casa</button>'+
     (hasCloud?'<button class="btn ghost" data-act="go" data-s="join">Entrar com código</button>':'')+
     '<button class="btn ghost" data-act="demo">Ver com 7 moradores de exemplo</button>'+
-    (state.authErr?'<p style="font-size:14px;opacity:.95">Não foi possível conectar ao servidor. Verifique se o login anônimo está ativo no Supabase.</p>':'')+
+    (state.authErr?'<p style="font-size:14px;opacity:.95">Não foi possível conectar ao servidor ('+esc(state.authMsg||"sem detalhe")+'). Verifique se o login anônimo está ativo no Supabase.</p>':'')+
     '</div></div>';
 }
 function viewCreate(){
@@ -559,7 +562,7 @@ function render(){
   var root=$("#root");
   if(!state.ready){root.innerHTML='<div class="screen"><p class="muted" style="padding-top:40vh;text-align:center">Carregando…</p></div>';return}
   if(!state.house){
-    root.innerHTML=ui.screen==="create"?viewCreate():ui.screen==="join"?viewJoin():viewWelcome();return;
+    root.innerHTML=state.netErr?viewRetry():(ui.screen==="create"?viewCreate():ui.screen==="join"?viewJoin():viewWelcome());return;
   }
   if(!me||idxOf(me)<0){root.innerHTML=viewPickMe();return}
   var c=calc(),badge=pendingFor().length+newBillsForMe().length;
@@ -684,13 +687,15 @@ function demoData(){
     bills:[mk(0,"Tesco","mercado",7000,ids,2),mk(1,"Eir","internet",6300,ids,3),mk(2,"Electric Ireland","energia",8400,ids,5),mk(3,"Lidl","mercado",3850,five,1)],
     settlements:[{id:uid(),kind:"payment",from:members[6].id,to:members[2].id,amount:1200,by:members[6].id,status:"pending",createdAt:now-5*3600000}]};
 }
-function enterCloudHouse(hid){
+function forgetHouse(){LS.set("rc-hid","");LS.set("rc-code","");state.hid=null;state.house=null}
+function enterCloudHouse(hid,code){
   state.mode="cloud";state.hid=hid;LS.set("rc-hid",hid);
-  return cloudFetch().then(function(){startRealtime();me=LS.get(meKey())||null;ui.screen="auto";})
+  if(code)LS.set("rc-code",code);
+  return cloudFetch().then(function(){if(state.code)LS.set("rc-code",state.code);startRealtime();me=LS.get(meKey())||null;ui.screen="auto";state.netErr=false;})
 }
 function leaveHouse(){
   if(channel&&sb){try{sb.removeChannel(channel)}catch(e){}channel=null}
-  LS.set("rc-hid","");state.hid=null;state.house=null;state.bills=[];state.settlements=[];state.code="";me=null;ui.screen="auto";ui.tab="inicio";ui.confirmReset=false;state.mode=hasCloud?"cloud":"local";
+  LS.set("rc-hid","");LS.set("rc-code","");state.hid=null;state.house=null;state.bills=[];state.settlements=[];state.code="";me=null;ui.screen="auto";ui.tab="inicio";ui.confirmReset=false;state.mode=hasCloud?"cloud":"local";
   if(!hasCloud)loadLocal();
   render();
 }
@@ -700,6 +705,8 @@ document.addEventListener("click",function(e){
   var a=t.getAttribute("data-act"),id=t.getAttribute("data-id"),c=state.house?calc():null;
   switch(a){
     case "go":ui.screen=t.getAttribute("data-s");ui.err="";render();break;
+    case "retry":location.reload();break;
+    case "forget":forgetHouse();state.netErr=false;ui.screen="join";render();break;
     case "demo":{var d=demoData();state.mode="demo";state.house=d.house;state.bills=d.bills;state.settlements=d.settlements;state.hid=null;persistLocal();me=null;render();break}
     case "exit-demo":LS.set("rc-demo","");state.house=null;state.bills=[];state.settlements=[];me=null;state.mode=hasCloud?"cloud":"local";ui.screen="auto";if(!hasCloud)loadLocal();render();break;
     case "draft-rm":ui.draft.splice(parseInt(t.getAttribute("data-i"),10),1);render();break;
@@ -765,9 +772,9 @@ function createHouse(){
   ui.busy=true;ui.err="";render();
   sb.rpc("create_house",{p_code:code,p_data:data}).then(function(r){
     if(r.error)throw r.error;
-    return enterCloudHouse(r.data);
+    return enterCloudHouse(r.data,code);
   }).then(function(){ui.busy=false;ui.draft=[];ui.draftHouse="";ui.draftCode="";render()}).catch(function(e){
-    ui.busy=false;ui.err=e&&/duplicate|unique/i.test(e.message||"")?"Esse código já está em uso. Escolha outro.":"Não foi possível criar a casa. Tente de novo.";render();
+    ui.busy=false;var det=(e&&(e.message||e.code))||"erro desconhecido";ui.err=/duplicate|unique/i.test(det)?"Esse código já está em uso. Escolha outro.":"Não foi possível criar a casa. Detalhe técnico: "+det;render();
   });
 }
 document.addEventListener("submit",function(e){
@@ -786,8 +793,8 @@ document.addEventListener("submit",function(e){
     var code=($("#j-code").value||"").trim().toUpperCase();
     if(code.length<4){ui.err="Digite o código completo.";render();return}
     ui.busy=true;ui.err="";ui.joinCode=code;render();
-    sb.rpc("join_house",{p_code:code}).then(function(r){if(r.error)throw r.error;return enterCloudHouse(r.data)}).then(function(){ui.busy=false;ui.joinCode="";render()}).catch(function(){
-      ui.busy=false;ui.err="Código não encontrado. Confira com quem criou a casa.";render();
+    sb.rpc("join_house",{p_code:code}).then(function(r){if(r.error)throw r.error;return enterCloudHouse(r.data,code)}).then(function(){ui.busy=false;ui.joinCode="";render()}).catch(function(e){var det=(e&&(e.message||e.code))||"";
+      ui.busy=false;ui.err=(!det||/house not found/i.test(det))?"Código não encontrado. Confira com quem criou a casa.":"Não foi possível entrar. Detalhe técnico: "+det;render();
     });
   }
 });
@@ -804,6 +811,7 @@ setInterval(function(){if(!document.hidden&&state.mode==="cloud")schedFetch()},3
 
 /* ---------- início ---------- */
 function boot(){
+  try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}catch(e){}
   render();
   if(hasCloud){
     sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true}});
@@ -812,10 +820,22 @@ function boot(){
       if(r.data&&r.data.session)return;
       return sb.auth.signInAnonymously().then(function(x){if(x.error)throw x.error});
     }).then(function(){
-      var hid=LS.get("rc-hid");
+      var hid=LS.get("rc-hid"),savedCode=LS.get("rc-code");
       if(!hid)return;
-      return enterCloudHouse(hid).catch(function(){LS.set("rc-hid","");state.hid=null;state.house=null});
-    }).catch(function(){state.authErr=true}).then(function(){state.ready=true;render()});
+      return enterCloudHouse(hid).catch(function(e){
+        if(savedCode){
+          return sb.rpc("join_house",{p_code:savedCode}).then(function(r){
+            if(r.error)throw r.error;
+            return enterCloudHouse(r.data,savedCode);
+          });
+        }
+        throw e;
+      }).catch(function(e){
+        var m=(e&&e.message)||"";
+        if(/sem casa|house not found/i.test(m)){forgetHouse()}
+        else{state.house=null;state.netErr=true}
+      });
+    }).catch(function(e){state.authErr=true;state.authMsg=(e&&(e.message||e.code))||"erro desconhecido"}).then(function(){state.ready=true;render()});
   }else{
     state.mode="local";
     if(LS.get("rc-demo")){state.mode="demo";loadLocal();if(!state.house){state.mode="local";loadLocal()}}
