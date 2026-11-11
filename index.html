@@ -187,6 +187,37 @@ svg{display:block}
 @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){.fade{animation:none}.sheet,.scrim,.btn,.fab{transition:none}}
 @media (max-width:380px){.grid2{grid-template-columns:1fr}.bal{grid-template-columns:34px 1fr auto}.bal .track{display:none}}
+/* lançamento: abas, progresso, caixa mensal */
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:4px;background:var(--bg);border-radius:16px;padding:4px;margin-bottom:18px}
+.seg button{border-radius:12px;padding:10px 6px;font-weight:700;font-size:14px;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--card);color:var(--ink);box-shadow:var(--shadow)}
+.bar-t{height:10px;border-radius:6px;background:var(--bg);overflow:hidden}
+.bar-t i{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,var(--brand),var(--brand-lt))}
+.bar-t i.done{background:var(--get)}
+.pool{display:grid;gap:10px;padding:14px;text-align:left;width:100%;min-width:0}
+.pool+.pool{border-top:1px solid var(--line)}
+.pool .row{display:flex;align-items:center;gap:12px;min-width:0}
+.pool .row .grow{flex:1;min-width:0}
+.pool b{display:block;overflow-wrap:anywhere}
+.pool small{color:var(--muted);font-size:13px;display:block}
+.pamt{display:flex;align-items:center;gap:10px;padding:8px 0}
+.pamt .nm{flex:1;min-width:0;overflow-wrap:anywhere;font-weight:700}
+.pamt input{width:112px;border:1.5px solid var(--line);background:var(--bg);border-radius:12px;padding:9px 10px;font-weight:700;text-align:right}
+.pamt input:focus{border-color:var(--brand);outline:0}
+.sumrow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding-top:4px}
+.sumline{font-weight:700;font-size:14px}
+.sumline.ok{color:var(--get)}
+.sumline.bad{color:var(--owe)}
+.minilink{color:var(--brand);font-weight:700;font-size:13px;padding:2px 6px}
+.hero .glass.wide{grid-column:1/-1}
+.memrow{display:grid;gap:8px;padding:12px 0}
+.memrow+.memrow{border-top:1px solid var(--line)}
+.memrow .mtop{display:flex;align-items:center;gap:10px;min-width:0}
+.memrow .mtop .grow{flex:1;min-width:0}
+.memrow b{display:block;overflow-wrap:anywhere}
+.memrow small{color:var(--muted);font-size:13px;display:block}
+.labelrow{display:flex;justify-content:space-between;align-items:center;gap:8px}
+
 </style>
 </head>
 <body>
@@ -333,8 +364,9 @@ function delDoc(coll,id){
 function calc(){
   var owed={},pend={};
   function add(a,b,v){var k=a+">"+b;owed[k]=(owed[k]||0)+v}
-  state.bills.forEach(function(b){(b.participants||[]).forEach(function(p){if(p!==b.payerId)add(p,b.payerId,(b.shares&&b.shares[p])||0)})});
+  state.bills.forEach(function(b){if(isPool(b))return;billDebts(b).forEach(function(d){add(d.from,d.to,d.amt)})});
   state.settlements.forEach(function(s){
+    if(s.kind==="poolpay")return;
     if(s.status==="confirmed"){add(s.from,s.to,-s.amount);if(s.kind==="offset")add(s.to,s.from,-s.amount)}
     else if(s.status==="pending"&&s.kind==="payment"){var k=s.from+">"+s.to;pend[k]=(pend[k]||0)+s.amount}
   });
@@ -356,16 +388,70 @@ function rel(ts){
 }
 function fmtDate(iso){try{return new Date(iso+"T12:00:00").toLocaleDateString("pt-BR",{day:"2-digit",month:"short"}).replace(".","")}catch(e){return iso}}
 function todayISO(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")}
-function billsSorted(){return state.bills.slice().sort(function(a,b){return (b.createdAt||0)-(a.createdAt||0)})}
+/* ---------- notinhas, pagadores e caixa mensal ---------- */
+var VERSION="v3 · 11 nov 2026";
+function p2(n){return String(n).padStart(2,"0")}
+function isPool(b){return !!b&&b.type==="pool"}
+function byNewest(a,b){return (b.createdAt||0)-(a.createdAt||0)}
+function memberIds(){return state.house.members.map(function(m){return m.id})}
+function payersOf(b){
+  if(b.payers&&Object.keys(b.payers).length)return b.payers;
+  var o={};if(b.payerId)o[b.payerId]=b.total;return o;
+}
+function payerIds(b){var pm=payersOf(b);return Object.keys(pm).filter(function(k){return pm[k]>0})}
+function payersText(b){
+  var ids=payerIds(b);
+  if(!ids.length)return "alguém";
+  if(ids.length===1)return nm(ids[0]);
+  if(ids.length===2)return nm(ids[0])+" e "+nm(ids[1]);
+  return nm(ids[0])+" e mais "+(ids.length-1);
+}
+/* quem enxerga o quê: notinha só para quem pagou, participa ou lançou; caixa só para quem divide, guarda ou criou */
+function inBill(b,id){return (b.participants||[]).indexOf(id)>-1||(payersOf(b)[id]||0)>0||b.createdBy===id}
+function inPool(p,id){return (p.participants||[]).indexOf(id)>-1||p.keeper===id||p.createdBy===id}
+function notinhasForMe(){return state.bills.filter(function(b){return !isPool(b)&&inBill(b,me)}).sort(byNewest)}
+function poolsForMe(){return state.bills.filter(function(b){return isPool(b)&&inPool(b,me)}).sort(byNewest)}
+
+/* converte "quem pagou quanto" e "parte de cada um" em dívidas entre pessoas */
+function billDebts(b){
+  var pm=payersOf(b),sh=b.shares||{},seen={},order=[];
+  memberIds().concat(Object.keys(pm),Object.keys(sh)).forEach(function(id){if(!seen[id]){seen[id]=1;order.push(id)}});
+  var net={},debtors=[],creds=[],credTot=0,out=[];
+  order.forEach(function(id){
+    var n=(pm[id]||0)-(sh[id]||0);net[id]=n;
+    if(n<0)debtors.push(id);else if(n>0){creds.push(id);credTot+=n}
+  });
+  if(!credTot)return out;
+  debtors.forEach(function(d){
+    var need=-net[d],left=need;
+    var parts=creds.map(function(c){var raw=need*net[c]/credTot,fl=Math.floor(raw);left-=fl;return {c:c,fl:fl,fr:raw-fl}});
+    parts.slice().sort(function(x,y){return y.fr-x.fr}).forEach(function(p){if(left>0){p.fl++;left--}});
+    parts.forEach(function(p){if(p.fl>0)out.push({from:d,to:p.c,amt:p.fl})});
+  });
+  return out;
+}
+
+function poolPayments(p,status){return state.settlements.filter(function(s){return s.kind==="poolpay"&&s.poolId===p.id&&(!status||s.status===status)})}
+function sumAmt(list){return list.reduce(function(a,s){return a+s.amount},0)}
+function poolPaid(p,id){return sumAmt(poolPayments(p,"confirmed").filter(function(s){return s.from===id}))}
+function poolPend(p,id){return sumAmt(poolPayments(p,"pending").filter(function(s){return s.from===id}))}
+function poolCollected(p){return sumAmt(poolPayments(p,"confirmed"))}
+function poolShare(p,id){return (p.shares&&p.shares[id])||0}
+function poolRemaining(p,id){return Math.max(0,poolShare(p,id)-poolPaid(p,id))}
+
 function pendingFor(){
   return state.settlements.filter(function(s){
     if(s.status!=="pending"||s.by===me)return false;
-    return s.kind==="payment"?s.to===me:(s.from===me||s.to===me);
+    if(s.kind==="payment"||s.kind==="poolpay")return s.to===me;
+    return s.from===me||s.to===me;
   });
 }
 function newBillsForMe(){
   var seen=parseInt(LS.get("rc-seen-"+meKey()+"-"+me)||"0",10)||0,lim=Date.now()-14*86400000;
-  return billsSorted().filter(function(b){return b.createdAt>seen&&b.createdAt>lim&&b.payerId!==me&&(b.participants||[]).indexOf(me)>-1}).slice(0,6);
+  return state.bills.filter(function(b){
+    if((b.createdAt||0)<=seen||b.createdAt<=lim||b.createdBy===me)return false;
+    return (b.participants||[]).indexOf(me)>-1;
+  }).sort(byNewest).slice(0,6);
 }
 
 /* ---------- telas ---------- */
@@ -412,6 +498,23 @@ function viewPickMe(){
 }
 function emptyArt(){return '<svg viewBox="0 0 64 64" width="56" height="56" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M14 8h36v48l-9-6-9 6-9-6-9 6z"/><path d="M24 22h16M24 32h16"/></svg>'}
 
+function poolCard(p){
+  var isP=(p.participants||[]).indexOf(me)>-1,late=!p.closed&&p.due&&todayISO()>p.due;
+  var share=poolShare(p,me),paid=poolPaid(p,me),pend=poolPend(p,me),rem=poolRemaining(p,me);
+  var pct,line,pill;
+  if(isP){
+    pct=share>0?Math.min(100,Math.round(paid/share*100)):100;
+    line=(rem===0?'Cota quitada: ':'Você pagou ')+fm(paid)+' de '+fm(share)+(pend?' · '+fm(pend)+' aguardando':'');
+    pill=p.closed?'<span class="pill">encerrado</span>':rem===0?'<span class="pill">quitado</span>':late?'<span class="pill warn">atrasado</span>':'<span class="pill wait">falta '+fm(rem)+'</span>';
+  }else{
+    var col=poolCollected(p);
+    pct=p.total>0?Math.min(100,Math.round(col/p.total*100)):0;
+    line='Arrecadado '+fm(col)+' de '+fm(p.total);
+    pill=p.closed?'<span class="pill">encerrado</span>':'<span class="pill wait">responsável</span>';
+  }
+  return '<button class="pool" data-act="pool-open" data-id="'+p.id+'"><div class="row"><span class="cat" style="--h:160">'+ic("home")+'</span><div class="grow"><b>'+esc(p.name)+'</b><small>Prazo '+fmtDate(p.due)+' · guarda: '+esc(nm(p.keeper))+'</small></div>'+pill+'</div>'+
+    '<div class="bar-t"><i class="'+(pct>=100?'done':'')+'" style="width:'+pct+'%"></i></div><small>'+line+'</small></button>';
+}
 function viewHome(c){
   var members=state.house.members,others=members.filter(function(m){return m.id!==me});
   var owe=[],get=[],iOwe=0,owedMe=0;
@@ -420,14 +523,21 @@ function viewHome(c){
     if(a>0){iOwe+=a;owe.push({o:o,a:a})}
     if(b>0){owedMe+=b;get.push({o:o,b:b})}
   });
-  var net=owedMe-iOwe;
+  var net=owedMe-iOwe,poolRem=0;
+  poolsForMe().forEach(function(p){if(!p.closed&&(p.participants||[]).indexOf(me)>-1)poolRem+=poolRemaining(p,me)});
   var out='<section class="hero"><div class="lbl">Seu saldo</div><div class="amount">'+(net>0?"+":net<0?"−":"")+fm(Math.abs(net))+'</div>'+
     '<div class="sub">'+(net>0?"Você tem a receber":net<0?"Você deve":"Você está quite")+'</div>'+
-    '<div class="chips"><div class="glass"><small>Você deve</small><b>'+fm(iOwe)+'</b></div><div class="glass"><small>Te devem</small><b>'+fm(owedMe)+'</b></div></div></section>';
+    '<div class="chips"><div class="glass"><small>Você deve</small><b>'+fm(iOwe)+'</b></div><div class="glass"><small>Te devem</small><b>'+fm(owedMe)+'</b></div>'+
+    (poolRem>0?'<div class="glass wide"><small>Falta pagar nos caixas mensais</small><b>'+fm(poolRem)+'</b></div>':'')+'</div></section>';
 
   var acts=pendingFor();
   if(acts.length){
     out+='<section class="sec"><div class="st"><h2>Esperando sua resposta</h2></div>'+acts.map(function(s){
+      if(s.kind==="poolpay"){
+        var pl=state.bills.find(function(x){return x.id===s.poolId});
+        return '<div class="callout alert">'+av(s.from)+'<div class="grow"><b>'+esc(nm(s.from))+' diz que pagou '+fm(s.amount)+' no caixa'+(pl?' “'+esc(pl.name)+'”':'')+'</b><small>'+rel(s.createdAt)+'. Confirme se o dinheiro chegou.</small>'+
+          '<div class="acts"><button class="btn sm" data-act="pay-ok" data-id="'+s.id+'">Recebi</button><button class="btn sm ghost" data-act="s-no" data-id="'+s.id+'">Não recebi</button></div></div></div>';
+      }
       if(s.kind==="payment"){
         return '<div class="callout alert">'+av(s.from)+'<div class="grow"><b>'+esc(nm(s.from))+' diz que te pagou '+fm(s.amount)+'</b><small>'+rel(s.createdAt)+'. Confirme se o dinheiro chegou.</small>'+
           '<div class="acts"><button class="btn sm" data-act="pay-ok" data-id="'+s.id+'">Recebi</button><button class="btn sm ghost" data-act="s-no" data-id="'+s.id+'">Não recebi</button></div></div></div>';
@@ -440,8 +550,14 @@ function viewHome(c){
   var nb=newBillsForMe();
   if(nb.length){
     out+='<section class="sec"><div class="st"><h2>Contas novas para você</h2><button class="link" data-act="markseen">Marcar como vistas</button></div><div class="group">'+nb.map(function(b){
-      return '<div class="item"><span class="cat" style="--h:'+(CATH[b.category]||150)+'">'+ic(b.category)+'</span><div class="grow"><b>'+esc(b.store)+'</b><small>'+esc(nm(b.payerId))+' pagou '+fm(b.total)+' · '+rel(b.createdAt)+'</small></div><div class="end"><b class="owe">'+fm(b.shares[me]||0)+'</b><small>sua parte</small></div></div>';
+      if(isPool(b))return '<div class="item"><span class="cat" style="--h:160">'+ic("home")+'</span><div class="grow"><b>Caixa: '+esc(b.name)+'</b><small>'+esc(nm(b.createdBy))+' abriu · prazo '+fmtDate(b.due)+'</small></div><div class="end"><b class="owe">'+fm(poolShare(b,me))+'</b><small>sua cota</small></div></div>';
+      return '<div class="item"><span class="cat" style="--h:'+(CATH[b.category]||150)+'">'+ic(b.category)+'</span><div class="grow"><b>'+esc(b.store)+'</b><small>'+esc(payersText(b))+' pagou '+fm(b.total)+' · '+rel(b.createdAt)+'</small></div><div class="end"><b class="owe">'+fm((b.shares&&b.shares[me])||0)+'</b><small>sua parte</small></div></div>';
     }).join("")+'</div></section>';
+  }
+
+  var pools=poolsForMe().filter(function(p){return !p.closed});
+  if(pools.length){
+    out+='<section class="sec"><div class="st"><h2>Caixa mensal</h2></div><div class="group">'+pools.map(poolCard).join("")+'</div></section>';
   }
 
   out+='<section class="sec"><div class="st"><h2>Você deve</h2></div><div class="group">';
@@ -491,16 +607,21 @@ function viewHome(c){
   return out;
 }
 function viewBills(){
-  var list=billsSorted(),now=new Date(),ym=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0");
-  var month=list.filter(function(b){return (b.date||"").indexOf(ym)===0}).reduce(function(a,b){return a+b.total},0);
-  var out='<section class="hero" style="padding-bottom:20px"><div class="lbl">Gasto da casa neste mês</div><div class="amount">'+fm(month)+'</div><div class="sub">'+list.length+' '+(list.length===1?"notinha":"notinhas")+' no total</div></section>';
+  var list=notinhasForMe(),pools=poolsForMe(),now=new Date(),ym=now.getFullYear()+"-"+p2(now.getMonth()+1);
+  var mine=0;
+  list.forEach(function(b){if((b.date||"").indexOf(ym)===0)mine+=(b.shares&&b.shares[me])||0});
+  pools.forEach(function(p){if((p.month||"")===ym&&(p.participants||[]).indexOf(me)>-1)mine+=poolShare(p,me)});
+  var out='<section class="hero" style="padding-bottom:20px"><div class="lbl">Suas despesas da casa neste mês</div><div class="amount">'+fm(mine)+'</div><div class="sub">'+list.length+' '+(list.length===1?"notinha":"notinhas")+' · '+pools.length+' '+(pools.length===1?"caixa":"caixas")+'</div></section>';
+  if(pools.length){
+    out+='<section class="sec"><div class="st"><h2>Caixas mensais</h2></div><div class="group">'+pools.map(poolCard).join("")+'</div></section>';
+  }
   out+='<section class="sec"><div class="st"><h2>Notinhas</h2></div><div class="group">';
-  if(!list.length)out+='<div class="empty">'+emptyArt()+'<p>Nenhuma notinha ainda.<br>Toque no botão + para lançar a primeira.</p></div>';
+  if(!list.length)out+='<div class="empty">'+emptyArt()+'<p>Nenhuma notinha para você ainda.<br>Toque no botão + para lançar a primeira.</p></div>';
   else out+=list.map(function(b){
-    var mine=b.payerId===me?null:(b.shares&&b.shares[me]);
-    var end=b.payerId===me?'<span class="pill">você pagou</span>':mine?'<small>sua parte</small><b class="owe">'+fm(mine)+'</b>':'<small>fora da divisão</small>';
+    var pa=payersOf(b)[me]||0,sh=(b.shares&&b.shares[me])||0;
+    var end=pa>0?'<span class="pill">você pagou '+fm(pa)+'</span>':sh?'<small>sua parte</small><b class="owe">'+fm(sh)+'</b>':'<small>fora da divisão</small>';
     return '<button class="item" data-act="bill-open" data-id="'+b.id+'"><span class="cat" style="--h:'+(CATH[b.category]||150)+'">'+ic(b.category)+'</span>'+
-      '<div class="grow"><b>'+esc(b.store)+'</b><small>'+fmtDate(b.date)+' · pago por '+esc(nm(b.payerId))+'</small></div><div class="end"><b>'+fm(b.total)+'</b>'+end+'</div></button>';
+      '<div class="grow"><b>'+esc(b.store)+'</b><small>'+fmtDate(b.date)+' · pago por '+esc(payersText(b))+' · '+(b.participants||[]).length+' pessoas</small></div><div class="end"><b>'+fm(b.total)+'</b>'+end+'</div></button>';
   }).join("");
   return out+'</div></section>';
 }
@@ -512,14 +633,27 @@ function statusPill(s){
 }
 function viewActivity(){
   var ev=[];
-  state.bills.forEach(function(b){ev.push({t:b.createdAt||0,who:b.payerId,h:'<b>'+esc(nm(b.payerId))+'</b> pagou '+esc(b.store)+'',r:'<b class="num">'+fm(b.total)+'</b><small>dividido em '+(b.participants||[]).length+'</small>'})});
+  notinhasForMe().forEach(function(b){
+    ev.push({t:b.createdAt||0,who:payerIds(b)[0]||b.payerId,h:'<b>'+esc(payersText(b))+'</b> pagou '+esc(b.store),r:'<b class="num">'+fm(b.total)+'</b><small>dividido em '+(b.participants||[]).length+'</small>'});
+  });
+  poolsForMe().forEach(function(p){
+    ev.push({t:p.createdAt||0,who:p.createdBy,h:'<b>'+esc(nm(p.createdBy))+'</b> abriu o caixa <b>'+esc(p.name)+'</b>',r:'<b class="num">'+fm(p.total)+'</b><small>'+(p.participants||[]).length+' cotas</small>'});
+  });
   state.settlements.forEach(function(s){
-    var h=s.kind==="payment"?'<b>'+esc(nm(s.from))+'</b> pagou a <b>'+esc(nm(s.to))+'</b>':'Abatimento entre <b>'+esc(nm(s.from))+'</b> e <b>'+esc(nm(s.to))+'</b>';
+    var h;
+    if(s.kind==="poolpay"){
+      var pl=state.bills.find(function(x){return x.id===s.poolId});
+      if(!pl||!inPool(pl,me))return;
+      h='<b>'+esc(nm(s.from))+'</b> pagou ao caixa <b>'+esc(pl.name)+'</b>';
+    }else{
+      if(s.from!==me&&s.to!==me)return;
+      h=s.kind==="payment"?'<b>'+esc(nm(s.from))+'</b> pagou a <b>'+esc(nm(s.to))+'</b>':'Abatimento entre <b>'+esc(nm(s.from))+'</b> e <b>'+esc(nm(s.to))+'</b>';
+    }
     ev.push({t:s.createdAt||0,who:s.from,h:h,r:'<b class="num">'+fm(s.amount)+'</b>'+statusPill(s)});
   });
   ev.sort(function(a,b){return b.t-a.t});
   var out='<section class="sec"><div class="st"><h2>Atividade</h2></div><div class="group">';
-  if(!ev.length)out+='<div class="empty">'+emptyArt()+'<p>Notinhas e pagamentos aparecem aqui.</p></div>';
+  if(!ev.length)out+='<div class="empty">'+emptyArt()+'<p>Notinhas e pagamentos que envolvem você aparecem aqui.</p></div>';
   else out+=ev.slice(0,60).map(function(e){return '<div class="item">'+av(e.who)+'<div class="grow"><span>'+e.h+'</span><small>'+rel(e.t)+'</small></div><div class="end">'+e.r+'</div></div>'}).join("");
   return out+'</div></section>';
 }
@@ -529,7 +663,13 @@ function inviteText(){
 }
 function viewHouse(){
   var h=state.house,used={};
-  state.bills.forEach(function(b){used[b.payerId]=1;(b.participants||[]).forEach(function(p){used[p]=1})});
+  state.bills.forEach(function(b){
+    if(b.payerId)used[b.payerId]=1;
+    Object.keys(b.payers||{}).forEach(function(k){used[k]=1});
+    (b.participants||[]).forEach(function(p){used[p]=1});
+    if(b.keeper)used[b.keeper]=1;
+    if(b.createdBy)used[b.createdBy]=1;
+  });
   state.settlements.forEach(function(s){used[s.from]=1;used[s.to]=1});
   var out='';
   if(state.mode==="demo")out+='<div class="banner"><span>Dados de exemplo. Nada é salvo no servidor.</span><button class="btn sm" data-act="exit-demo">Sair do exemplo</button></div>';
@@ -544,18 +684,22 @@ function viewHouse(){
   }).join("")+'</div>'+
   '<form data-form="mem-add" style="display:flex;gap:8px;margin-top:10px"><input id="mem-new" class="plain" placeholder="Adicionar morador" autocomplete="off" style="flex:1;min-width:0;border:1.5px solid var(--line);background:var(--card);border-radius:14px;padding:12px 14px;font-weight:600"><button class="btn" type="submit">Adicionar</button></form></section>';
   out+='<section class="sec"><div class="st"><h2>Como funciona</h2></div><div class="group">'+
+    '<div class="item"><div class="grow"><b>Notinha</b><small>Informe quem pagou e entre quem a conta é dividida. Cada um só vê as notinhas em que pagou ou participa.</small></div></div>'+
+    '<div class="item"><div class="grow"><b>Mais de um pagador</b><small>Marque todos que pagaram e informe quanto cada um colocou. A soma precisa fechar com o total.</small></div></div>'+
+    '<div class="item"><div class="grow"><b>Caixa mensal</b><small>O gasto total da casa vira uma cota por pessoa. Cada um paga aos poucos até completar a cota, e quem guarda o dinheiro confirma os recebimentos.</small></div></div>'+
     '<div class="item"><div class="grow"><b>Divisão</b><small>Partes iguais entre quem participou. O centavo que sobra vai para os primeiros da lista.</small></div></div>'+
     '<div class="item"><div class="grow"><b>Pagamento</b><small>Quem deve marca como pago e a outra pessoa confirma o recebimento.</small></div></div>'+
     '<div class="item"><div class="grow"><b>Abatimento</b><small>Se duas pessoas devem uma à outra, qualquer uma propõe compensar o menor valor. Vale depois que a outra aceita.</small></div></div></div></section>';
   out+='<section class="sec" style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn ghost" data-act="switchme">Trocar de pessoa</button>'+
     (state.mode==="cloud"?'<button class="btn ghost" data-act="leave">Sair da casa</button>':'')+
     (ui.confirmReset?'<span style="align-self:center;font-weight:600">Apagar a casa e todas as contas?</span><button class="btn danger" data-act="reset-yes">Apagar tudo</button><button class="btn ghost" data-act="reset-no">Cancelar</button>':'<button class="btn danger" data-act="reset-go">Apagar a casa</button>')+'</section>';
+  out+='<p class="muted" style="text-align:center;font-size:12px;margin-top:6px">Racha Casa '+esc(VERSION)+'</p>';
   return out;
 }
 function navHtml(badge){
   function tab(id,label,icon){return '<button class="tab" data-act="tab" data-tab="'+id+'" '+(ui.tab===id?'aria-current="page"':'')+'>'+ic(icon)+'<span>'+label+'</span>'+(id==="inicio"&&badge?'<span class="badge">'+badge+'</span>':'')+'</button>'}
-  return '<nav class="nav" aria-label="Principal">'+tab("inicio","Início","home")+tab("notinhas","Notinhas","receipt")+
-    '<button class="fab" data-act="newbill" aria-label="Nova notinha">'+ic("plus")+'</button>'+tab("atividade","Atividade","clock")+tab("casa","Casa","users")+'</nav>';
+  return '<nav class="nav" aria-label="Principal">'+tab("inicio","Início","home")+tab("notinhas","Contas","receipt")+
+    '<button class="fab" data-act="newbill" aria-label="Novo lançamento">'+ic("plus")+'</button>'+tab("atividade","Atividade","clock")+tab("casa","Casa","users")+'</nav>';
 }
 
 function render(){
@@ -594,56 +738,6 @@ function closeSheet(quick){
   var s=$("#sheet"),b=$("#scrim");if(s)s.classList.remove("open");if(b)b.classList.remove("open");
   setTimeout(function(){if(!$("#sheet.open"))l.innerHTML=""},300);
 }
-function billSheet(){
-  var h=state.house;
-  sheetState={parts:h.members.map(function(m){return m.id}),catTouched:false};
-  openSheet('<h2>Nova notinha</h2><p class="lead">O app divide o total entre quem você marcar.</p>'+
-    '<form class="stack" id="bill-form" novalidate>'+
-    '<div class="field"><label for="f-total">Total (€)</label><input id="f-total" class="bigmoney" inputmode="decimal" placeholder="0,00" autocomplete="off"></div>'+
-    '<div class="field"><label for="f-store">Estabelecimento</label><input id="f-store" placeholder="Ex.: Tesco" autocomplete="off"></div>'+
-    '<div class="grid2"><div class="field"><label for="f-cat">Categoria</label><select id="f-cat">'+CATS.map(function(c){return '<option value="'+c[0]+'">'+c[1]+'</option>'}).join("")+'</select></div>'+
-    '<div class="field"><label for="f-date">Data</label><input id="f-date" type="date" value="'+todayISO()+'"></div></div>'+
-    '<div class="field"><label for="f-payer">Quem pagou</label><select id="f-payer">'+h.members.map(function(m){return '<option value="'+esc(m.id)+'"'+(m.id===me?" selected":"")+'>'+esc(m.name)+'</option>'}).join("")+'</select></div>'+
-    '<div class="field"><span class="lbl">Dividir entre</span><div class="chips" id="f-parts">'+h.members.map(function(m){return '<button type="button" class="pick" data-p="'+esc(m.id)+'" aria-pressed="true">'+esc(m.name)+'</button>'}).join("")+'</div></div>'+
-    '<div class="receipt" id="f-preview"><span class="muted">Informe o total para ver a divisão.</span></div>'+
-    '<div class="err" id="f-err" role="alert"></div>'+
-    '<button class="btn block" type="submit">Salvar e dividir</button></form>',function(){
-      $("#bill-form").addEventListener("submit",submitBill);
-      $("#f-parts").addEventListener("click",function(e){
-        var b=e.target.closest("[data-p]");if(!b)return;
-        var id=b.getAttribute("data-p"),i=sheetState.parts.indexOf(id);
-        if(i>-1)sheetState.parts.splice(i,1);else sheetState.parts.push(id);
-        b.setAttribute("aria-pressed",String(sheetState.parts.indexOf(id)>-1));updatePreview();
-      });
-      $("#f-store").addEventListener("input",function(){if(!sheetState.catTouched){var g=guessCat($("#f-store").value);if(g)$("#f-cat").value=g}});
-      $("#f-cat").addEventListener("change",function(){sheetState.catTouched=true});
-      $("#f-total").addEventListener("input",updatePreview);
-      $("#f-payer").addEventListener("change",updatePreview);
-      setTimeout(function(){var t=$("#f-total");if(t)t.focus()},350);
-    });
-}
-function updatePreview(){
-  var box=$("#f-preview");if(!box||!sheetState)return;
-  var total=parseMoney($("#f-total").value),parts=sheetState.parts;
-  if(total<=0||!parts.length){box.innerHTML='<span class="muted">'+(total<=0?"Informe o total para ver a divisão.":"Escolha quem participa da divisão.")+'</span>';return}
-  var order=state.house.members.map(function(m){return m.id}).filter(function(id){return parts.indexOf(id)>-1});
-  var sh=splitEqual(total,order),payer=$("#f-payer").value;
-  box.innerHTML=order.map(function(id){return '<div class="rl"><span>'+esc(nm(id))+(id===payer?" (pagou)":"")+'</span><b class="num">'+fm(sh[id])+'</b></div>'}).join("")+
-    '<div class="rl sum"><span>Total</span><b class="num">'+fm(total)+'</b></div>';
-}
-function submitBill(e){
-  e.preventDefault();
-  var store=($("#f-store").value||"").trim(),total=parseMoney($("#f-total").value),date=$("#f-date").value,payer=$("#f-payer").value,cat=$("#f-cat").value;
-  var order=state.house.members.map(function(m){return m.id}).filter(function(id){return sheetState.parts.indexOf(id)>-1});
-  var err=$("#f-err");
-  if(total<=0){err.textContent="Informe o total da notinha.";$("#f-total").focus();return}
-  if(!store){err.textContent="Informe o estabelecimento.";$("#f-store").focus();return}
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){err.textContent="Informe a data.";return}
-  if(!order.some(function(id){return id!==payer})){err.textContent="Escolha pelo menos uma pessoa além de quem pagou.";return}
-  var bill={id:uid(),payerId:payer,store:store,category:cat,total:total,date:date,participants:order,shares:splitEqual(total,order),createdAt:Date.now(),createdBy:me};
-  closeSheet();ui.tab="notinhas";
-  putDoc("bills",bill).then(function(){toast("Notinha salva e dividida entre "+order.length+" pessoas.")});
-}
 function paySheet(mode,other,max){
   var title=mode==="pay"?"Pagar a "+nm(other):"Receber de "+nm(other);
   openSheet('<h2>'+esc(title)+'</h2><p class="lead">'+(mode==="pay"?esc(nm(other))+" vai confirmar o recebimento.":"O valor entra como recebido na hora.")+'</p>'+
@@ -665,28 +759,246 @@ function paySheet(mode,other,max){
       setTimeout(function(){var i=$("#p-amt");if(i){i.focus();i.select()}},350);
     });
 }
-function billDetail(id,confirmDel){
-  var b=state.bills.find(function(x){return x.id===id});if(!b)return;
-  openSheet('<div style="display:flex;gap:12px;align-items:center;margin-bottom:6px"><span class="cat" style="--h:'+(CATH[b.category]||150)+'">'+ic(b.category)+'</span><div style="min-width:0"><h2 style="margin:0">'+esc(b.store)+'</h2><small class="muted">'+fmtDate(b.date)+' · '+esc(CAT[b.category]||"Outros")+'</small></div></div>'+
-    '<p class="lead">Pago por '+esc(nm(b.payerId))+'</p>'+
-    '<div class="receipt">'+(b.participants||[]).map(function(p){return '<div class="rl"><span>'+esc(nm(p))+(p===b.payerId?" (pagou)":"")+'</span><b class="num">'+fm(b.shares[p]||0)+'</b></div>'}).join("")+
-    '<div class="rl sum"><span>Total</span><b class="num">'+fm(b.total)+'</b></div></div>'+
-    (confirmDel?'<p style="font-weight:700;margin-bottom:10px">Excluir esta notinha?</p><div style="display:flex;gap:10px"><button class="btn danger" data-act="bill-del-yes" data-id="'+b.id+'" style="flex:1">Excluir</button><button class="btn ghost" data-act="bill-open" data-id="'+b.id+'" style="flex:1">Manter</button></div>':
-      '<button class="btn danger block" data-act="bill-del" data-id="'+b.id+'">Excluir notinha</button>'));
+/* ---------- lançamento: notinha ou caixa mensal ---------- */
+function orderedIds(list){return memberIds().filter(function(id){return list.indexOf(id)>-1})}
+function newSheet(mode){
+  mode=mode||"bill";
+  var ids=memberIds();
+  sheetState={mode:mode,parts:ids.slice(),payers:[me],payAmt:{},catTouched:false};
+  var html='<h2>Novo lançamento</h2>'+
+    '<div class="seg" role="group" aria-label="Tipo de lançamento"><button type="button" data-act="sheet-mode" data-mode="bill" aria-pressed="'+(mode==="bill")+'">Notinha</button>'+
+    '<button type="button" data-act="sheet-mode" data-mode="pool" aria-pressed="'+(mode==="pool")+'">Caixa mensal</button></div>'+
+    (mode==="bill"?billForm():poolForm());
+  var body=$("#sheet-body");
+  if(body&&$("#sheet")){body.innerHTML=html;bindSheet(mode)}
+  else openSheet('<div id="sheet-body">'+html+'</div>',function(){bindSheet(mode)});
+}
+function partsChips(){
+  return state.house.members.map(function(m){return '<button type="button" class="pick" data-p="'+esc(m.id)+'" aria-pressed="'+(sheetState.parts.indexOf(m.id)>-1)+'">'+esc(m.name)+'</button>'}).join("");
+}
+function billForm(){
+  var h=state.house;
+  return '<p class="lead">Divide uma compra ou conta entre as pessoas que você marcar. Só elas vão ver esta notinha.</p>'+
+    '<form class="stack" id="bill-form" novalidate>'+
+    '<div class="field"><label for="f-total">Total (€)</label><input id="f-total" class="bigmoney" inputmode="decimal" placeholder="0,00" autocomplete="off"></div>'+
+    '<div class="field"><label for="f-store">Estabelecimento</label><input id="f-store" placeholder="Ex.: Tesco" autocomplete="off"></div>'+
+    '<div class="grid2"><div class="field"><label for="f-cat">Categoria</label><select id="f-cat">'+CATS.map(function(c){return '<option value="'+c[0]+'">'+c[1]+'</option>'}).join("")+'</select></div>'+
+    '<div class="field"><label for="f-date">Data</label><input id="f-date" type="date" value="'+todayISO()+'"></div></div>'+
+    '<div class="field"><span class="lbl">Quem pagou (pode marcar mais de um)</span><div class="chips" id="f-payers">'+h.members.map(function(m){return '<button type="button" class="pick" data-pp="'+esc(m.id)+'" aria-pressed="'+(m.id===me)+'">'+esc(m.name)+'</button>'}).join("")+'</div><div id="f-payamts"></div></div>'+
+    '<div class="field"><span class="lbl">Dividir entre</span><div class="chips" id="f-parts">'+partsChips()+'</div></div>'+
+    '<div class="receipt" id="f-preview"><span class="muted">Informe o total para ver a divisão.</span></div>'+
+    '<div class="err" id="f-err" role="alert"></div>'+
+    '<button class="btn block" type="submit">Salvar e dividir</button></form>';
+}
+function poolForm(){
+  var h=state.house,d=new Date(),last=new Date(d.getFullYear(),d.getMonth()+1,0);
+  var due=last.getFullYear()+"-"+p2(last.getMonth()+1)+"-"+p2(last.getDate());
+  var months=["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
+  return '<p class="lead">Informe o gasto total da casa no mês. O app divide em cotas e cada pessoa vai pagando aos poucos até completar a dela.</p>'+
+    '<form class="stack" id="pool-form" novalidate>'+
+    '<div class="field"><label for="f-name">Nome do caixa</label><input id="f-name" value="Casa de '+months[d.getMonth()]+'" autocomplete="off"></div>'+
+    '<div class="field"><label for="f-total">Gasto total do mês (€)</label><input id="f-total" class="bigmoney" inputmode="decimal" placeholder="0,00" autocomplete="off"></div>'+
+    '<div class="grid2"><div class="field"><label for="f-due">Prazo final</label><input id="f-due" type="date" value="'+due+'"></div>'+
+    '<div class="field"><label for="f-keeper">Quem guarda o dinheiro</label><select id="f-keeper">'+h.members.map(function(m){return '<option value="'+esc(m.id)+'"'+(m.id===me?" selected":"")+'>'+esc(m.name)+'</option>'}).join("")+'</select></div></div>'+
+    '<div class="field"><span class="lbl">Dividir entre</span><div class="chips" id="f-parts">'+partsChips()+'</div></div>'+
+    '<div class="receipt" id="f-preview"><span class="muted">Informe o total para ver a cota de cada um.</span></div>'+
+    '<div class="err" id="f-err" role="alert"></div>'+
+    '<button class="btn block" type="submit">Abrir caixa</button></form>';
+}
+function bindSheet(mode){
+  var parts=$("#f-parts");
+  parts.addEventListener("click",function(e){
+    var b=e.target.closest("[data-p]");if(!b)return;
+    var id=b.getAttribute("data-p"),i=sheetState.parts.indexOf(id);
+    if(i>-1)sheetState.parts.splice(i,1);else sheetState.parts.push(id);
+    b.setAttribute("aria-pressed",String(sheetState.parts.indexOf(id)>-1));updatePreview();
+  });
+  $("#f-total").addEventListener("input",function(){updatePreview();if(mode==="bill")updatePaySum()});
+  if(mode==="pool"){
+    $("#pool-form").addEventListener("submit",submitPool);
+    updatePreview();
+    setTimeout(function(){var t=$("#f-total");if(t)t.focus()},350);
+    return;
+  }
+  $("#bill-form").addEventListener("submit",submitBill);
+  $("#f-store").addEventListener("input",function(){if(!sheetState.catTouched){var g=guessCat($("#f-store").value);if(g)$("#f-cat").value=g}});
+  $("#f-cat").addEventListener("change",function(){sheetState.catTouched=true});
+  $("#f-payers").addEventListener("click",function(e){
+    var b=e.target.closest("[data-pp]");if(!b)return;
+    var id=b.getAttribute("data-pp"),i=sheetState.payers.indexOf(id);
+    if(i>-1){if(sheetState.payers.length===1)return;sheetState.payers.splice(i,1);delete sheetState.payAmt[id]}else sheetState.payers.push(id);
+    b.setAttribute("aria-pressed",String(sheetState.payers.indexOf(id)>-1));
+    var any=false;Object.keys(sheetState.payAmt).forEach(function(k){if(sheetState.payAmt[k]>0)any=true});
+    if(sheetState.payers.length>1&&!any)fillEqualPay(true);
+    renderPayAmts();updatePreview();
+  });
+  $("#f-payamts").addEventListener("input",function(e){
+    var inp=e.target.closest("[data-pa]");if(!inp)return;
+    sheetState.payAmt[inp.getAttribute("data-pa")]=parseMoney(inp.value);updatePaySum();updatePreview();
+  });
+  $("#f-payamts").addEventListener("click",function(e){
+    if(e.target.closest("[data-eq]")){fillEqualPay();renderPayAmts();updatePreview()}
+  });
+  updatePreview();
+  setTimeout(function(){var t=$("#f-total");if(t)t.focus()},350);
+}
+function fillEqualPay(silent){
+  var total=parseMoney($("#f-total").value),ids=orderedIds(sheetState.payers);
+  sheetState.payAmt=total>0?splitEqual(total,ids):{};
+}
+function renderPayAmts(){
+  var box=$("#f-payamts");if(!box)return;
+  var ids=orderedIds(sheetState.payers);
+  if(ids.length<2){box.innerHTML="";return}
+  box.innerHTML='<div style="margin-top:8px">'+ids.map(function(id){
+    var v=sheetState.payAmt[id];
+    return '<div class="pamt"><span class="nm">'+esc(nm(id))+' pagou</span><input data-pa="'+esc(id)+'" inputmode="decimal" placeholder="0,00" autocomplete="off" aria-label="Valor pago por '+esc(nm(id))+'" value="'+(v>0?toInput(v):"")+'"></div>';
+  }).join("")+'<div class="sumrow"><span class="sumline" id="f-paysum"></span><button type="button" class="minilink" data-eq>Dividir igual</button></div></div>';
+  updatePaySum();
+}
+function paySum(){var s=0;orderedIds(sheetState.payers).forEach(function(id){s+=sheetState.payAmt[id]||0});return s}
+function updatePaySum(){
+  var el=$("#f-paysum");if(!el||!sheetState)return;
+  var total=parseMoney($("#f-total").value),s=paySum();
+  if(total<=0){el.className="sumline";el.textContent="Soma dos pagamentos: "+fm(s);return}
+  var d=total-s;
+  if(d===0){el.className="sumline ok";el.textContent="Fechou: "+fm(s)+" de "+fm(total)}
+  else{el.className="sumline bad";el.textContent=(d>0?"Faltam ":"Passou ")+fm(Math.abs(d))+" para fechar "+fm(total)}
+}
+function updatePreview(){
+  var box=$("#f-preview");if(!box||!sheetState)return;
+  var total=parseMoney($("#f-total").value),parts=sheetState.parts,pool=sheetState.mode==="pool";
+  if(total<=0||!parts.length){box.innerHTML='<span class="muted">'+(total<=0?(pool?"Informe o total para ver a cota de cada um.":"Informe o total para ver a divisão."):"Escolha quem participa da divisão.")+'</span>';return}
+  var order=orderedIds(parts),sh=splitEqual(total,order),multi=!pool&&sheetState.payers.length>1;
+  box.innerHTML=order.map(function(id){
+    var tag="";
+    if(!pool&&sheetState.payers.indexOf(id)>-1)tag=multi?" (pagou "+fm(sheetState.payAmt[id]||0)+")":" (pagou)";
+    return '<div class="rl"><span>'+esc(nm(id))+tag+'</span><b class="num">'+fm(sh[id])+'</b></div>';
+  }).join("")+'<div class="rl sum"><span>Total</span><b class="num">'+fm(total)+'</b></div>';
+}
+function submitBill(e){
+  e.preventDefault();
+  var store=($("#f-store").value||"").trim(),total=parseMoney($("#f-total").value),date=$("#f-date").value,cat=$("#f-cat").value;
+  var order=orderedIds(sheetState.parts),pids=orderedIds(sheetState.payers),err=$("#f-err");
+  if(total<=0){err.textContent="Informe o total da notinha.";$("#f-total").focus();return}
+  if(!store){err.textContent="Informe o estabelecimento.";$("#f-store").focus();return}
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){err.textContent="Informe a data.";return}
+  if(!order.length){err.textContent="Escolha quem participa da divisão.";return}
+  var payers={};
+  if(pids.length===1)payers[pids[0]]=total;
+  else{
+    for(var i=0;i<pids.length;i++){if(!(sheetState.payAmt[pids[i]]>0)){err.textContent="Informe quanto "+nm(pids[i])+" pagou.";return}payers[pids[i]]=sheetState.payAmt[pids[i]]}
+    if(paySum()!==total){err.textContent="Os valores pagos somam "+fm(paySum())+", mas o total é "+fm(total)+".";return}
+  }
+  var main=pids.slice().sort(function(a,b){return payers[b]-payers[a]})[0];
+  var bill={id:uid(),payerId:main,payers:payers,store:store,category:cat,total:total,date:date,participants:order,shares:splitEqual(total,order),createdAt:Date.now(),createdBy:me};
+  if(!billDebts(bill).length){err.textContent="Com essa divisão ninguém fica devendo. Inclua mais alguém em “Dividir entre”.";return}
+  closeSheet();ui.tab="notinhas";
+  putDoc("bills",bill).then(function(){toast("Notinha salva. Só quem participa vai ver.")});
+}
+function submitPool(e){
+  e.preventDefault();
+  var name=($("#f-name").value||"").trim(),total=parseMoney($("#f-total").value),due=$("#f-due").value,keeper=$("#f-keeper").value,order=orderedIds(sheetState.parts),err=$("#f-err");
+  if(!name){err.textContent="Dê um nome ao caixa.";$("#f-name").focus();return}
+  if(total<=0){err.textContent="Informe o gasto total do mês.";$("#f-total").focus();return}
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(due)){err.textContent="Informe o prazo final.";return}
+  if(!order.length){err.textContent="Escolha quem divide o caixa.";return}
+  var pool={id:uid(),type:"pool",name:name,month:due.slice(0,7),total:total,participants:order,shares:splitEqual(total,order),keeper:keeper,due:due,closed:false,createdAt:Date.now(),createdBy:me};
+  closeSheet();ui.tab="notinhas";
+  putDoc("bills",pool).then(function(){toast("Caixa aberto. Cada pessoa tem uma cota.")});
 }
 
-/* ---------- ações ---------- */
+/* ---------- caixa mensal: detalhe e pagamentos ---------- */
+function poolSheet(id,confirmDel){
+  var p=state.bills.find(function(x){return x.id===id&&isPool(x)});if(!p)return;
+  var isKeeper=p.keeper===me,canManage=isKeeper||p.createdBy===me,col=poolCollected(p);
+  var pct=p.total>0?Math.min(100,Math.round(col/p.total*100)):0;
+  var rows=(p.participants||[]).map(function(pid){
+    var share=poolShare(p,pid),paid=poolPaid(p,pid),pend=poolPend(p,pid),rem=Math.max(0,share-paid-pend);
+    var pp=Math.min(100,share>0?Math.round(paid/share*100):100);
+    var pill=paid>=share?'<span class="pill">quitado</span>':(!p.closed&&p.due&&todayISO()>p.due)?'<span class="pill warn">atrasado</span>':'<span class="pill wait">falta '+fm(Math.max(0,share-paid))+'</span>';
+    var acts='';
+    poolPayments(p,"pending").filter(function(s){return s.from===pid}).forEach(function(s){
+      if(isKeeper)acts+='<div class="sub-actions" style="padding:0"><span class="pill wait">'+fm(s.amount)+' aguardando</span><button class="btn sm" data-act="pay-ok" data-id="'+s.id+'">Recebi</button><button class="btn sm ghost" data-act="s-no" data-id="'+s.id+'">Não recebi</button></div>';
+      else if(s.from===me)acts+='<div class="sub-actions" style="padding:0"><span class="pill wait">'+fm(s.amount)+' aguardando '+esc(nm(p.keeper))+'</span><button class="btn sm ghost" data-act="s-del" data-id="'+s.id+'">Cancelar</button></div>';
+    });
+    if(!p.closed&&rem>0){
+      if(pid===me)acts+='<div class="sub-actions" style="padding:0"><button class="btn sm" data-act="pool-pay" data-id="'+p.id+'" data-who="'+esc(pid)+'">'+(isKeeper?"Registrar meu pagamento":"Pagar ao caixa")+'</button></div>';
+      else if(isKeeper)acts+='<div class="sub-actions" style="padding:0"><button class="btn sm soft" data-act="pool-pay" data-id="'+p.id+'" data-who="'+esc(pid)+'">Registrar recebimento</button></div>';
+    }
+    return '<div class="memrow"><div class="mtop">'+av(pid)+'<div class="grow"><b>'+esc(nm(pid))+(pid===me?' <span class="pill">você</span>':'')+'</b><small>Pagou '+fm(paid)+' de '+fm(share)+'</small></div>'+pill+'</div><div class="bar-t"><i class="'+(pp>=100?'done':'')+'" style="width:'+pp+'%"></i></div>'+acts+'</div>';
+  }).join("");
+  var foot='';
+  if(canManage){
+    if(confirmDel)foot='<p style="font-weight:700;margin:14px 0 10px">Excluir este caixa e todos os pagamentos dele?</p><div style="display:flex;gap:10px"><button class="btn danger" data-act="pool-del-yes" data-id="'+p.id+'" style="flex:1">Excluir</button><button class="btn ghost" data-act="pool-open" data-id="'+p.id+'" style="flex:1">Manter</button></div>';
+    else foot='<div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap"><button class="btn ghost" data-act="pool-toggle" data-id="'+p.id+'" style="flex:1">'+(p.closed?"Reabrir caixa":"Encerrar caixa")+'</button><button class="btn danger" data-act="pool-del" data-id="'+p.id+'" style="flex:1">Excluir</button></div>';
+  }
+  openSheet('<div style="display:flex;gap:12px;align-items:center;margin-bottom:6px"><span class="cat" style="--h:160">'+ic("home")+'</span><div style="min-width:0"><h2 style="margin:0">'+esc(p.name)+'</h2><small class="muted">Prazo '+fmtDate(p.due)+' · guarda: '+esc(nm(p.keeper))+(p.closed?' · encerrado':'')+'</small></div></div>'+
+    '<p class="lead">Arrecadado '+fm(col)+' de '+fm(p.total)+'</p><div class="bar-t" style="margin-bottom:6px"><i class="'+(pct>=100?'done':'')+'" style="width:'+pct+'%"></i></div>'+
+    '<div>'+rows+'</div>'+foot);
+}
+function poolPaySheet(poolId,who){
+  var p=state.bills.find(function(x){return x.id===poolId&&isPool(x)});if(!p)return;
+  var max=Math.max(0,poolShare(p,who)-poolPaid(p,who)-poolPend(p,who));
+  if(max<=0){toast("Esta cota já está completa.");return}
+  var self=who===me,instant=p.keeper===me;
+  openSheet('<h2>'+(self?"Pagar ao caixa":"Receber de "+esc(nm(who)))+'</h2><p class="lead">'+esc(p.name)+' · '+(instant?"O valor entra como recebido na hora.":esc(nm(p.keeper))+" vai confirmar o recebimento.")+'</p>'+
+    '<form class="stack" id="pp-form"><div class="field"><label for="pp-amt">Valor (€)</label><input id="pp-amt" class="bigmoney" inputmode="decimal" value="'+toInput(max)+'" autocomplete="off"></div>'+
+    '<div class="chips"><button type="button" class="pick" data-fill="'+max+'">Tudo ('+fm(max)+')</button><button type="button" class="pick" data-fill="'+Math.floor(max/2)+'">Metade</button></div>'+
+    '<div class="err" id="pp-err"></div><button class="btn block" type="submit">'+(instant?"Registrar":"Enviar")+'</button></form>',function(){
+      $("#pp-form").addEventListener("click",function(e){var b=e.target.closest("[data-fill]");if(b)$("#pp-amt").value=toInput(parseInt(b.getAttribute("data-fill"),10))});
+      $("#pp-form").addEventListener("submit",function(e){
+        e.preventDefault();
+        var amt=parseMoney($("#pp-amt").value),err=$("#pp-err");
+        var cap=Math.max(0,poolShare(p,who)-poolPaid(p,who)-poolPend(p,who));
+        if(amt<=0){err.textContent="Informe um valor maior que zero.";return}
+        if(amt>cap){err.textContent="O valor passa do que falta na cota ("+fm(cap)+").";return}
+        var s={id:uid(),kind:"poolpay",poolId:p.id,from:who,to:p.keeper,amount:amt,by:me,status:instant?"confirmed":"pending",createdAt:Date.now()};
+        if(instant)s.resolvedAt=Date.now();
+        closeSheet();
+        putDoc("settlements",s).then(function(){toast(instant?"Pagamento registrado no caixa.":"Enviado. "+nm(p.keeper)+" vai confirmar.")});
+      });
+      setTimeout(function(){var i=$("#pp-amt");if(i){i.focus();i.select()}},350);
+    });
+}
+function billDetail(id,confirmDel){
+  var b=state.bills.find(function(x){return x.id===id&&!isPool(x)});if(!b)return;
+  var pm=payersOf(b),sh=b.shares||{},seen={},ids=[];
+  memberIds().concat(Object.keys(pm),Object.keys(sh)).forEach(function(k){if(!seen[k]&&(pm[k]||sh[k]!==undefined)){seen[k]=1;ids.push(k)}});
+  var rows=ids.map(function(k){
+    var paid=pm[k]||0;
+    return '<div class="rl"><span>'+esc(nm(k))+(paid?' <small class="muted">pagou '+fm(paid)+'</small>':'')+'</span><b class="num">'+fm(sh[k]||0)+'</b></div>';
+  }).join("");
+  var debts=billDebts(b).map(function(d){return '<div class="rl"><span>'+esc(nm(d.from))+' deve a '+esc(nm(d.to))+'</span><b class="num">'+fm(d.amt)+'</b></div>'}).join("");
+  openSheet('<div style="display:flex;gap:12px;align-items:center;margin-bottom:6px"><span class="cat" style="--h:'+(CATH[b.category]||150)+'">'+ic(b.category)+'</span><div style="min-width:0"><h2 style="margin:0">'+esc(b.store)+'</h2><small class="muted">'+fmtDate(b.date)+' · '+esc(CAT[b.category]||"Outros")+'</small></div></div>'+
+    '<p class="lead">Pago por '+esc(payersText(b))+'. Parte de cada um:</p>'+
+    '<div class="receipt">'+rows+'<div class="rl sum"><span>Total</span><b class="num">'+fm(b.total)+'</b></div></div>'+
+    (debts?'<p class="lead" style="margin-top:14px">Quem fica devendo:</p><div class="receipt">'+debts+'</div>':'')+
+    (confirmDel?'<p style="font-weight:700;margin:14px 0 10px">Excluir esta notinha?</p><div style="display:flex;gap:10px"><button class="btn danger" data-act="bill-del-yes" data-id="'+b.id+'" style="flex:1">Excluir</button><button class="btn ghost" data-act="bill-open" data-id="'+b.id+'" style="flex:1">Manter</button></div>':
+      '<button class="btn danger block" style="margin-top:14px" data-act="bill-del" data-id="'+b.id+'">Excluir notinha</button>'));
+}
+
+/* ---------- exemplo ---------- */
 function demoData(){
   var names=["Ana","Bruno","Carla","Diego","Elisa","Fábio","Gabi"];
   var members=names.map(function(n){return {id:uid(),name:n}}),ids=members.map(function(m){return m.id});
   var day=86400000,now=Date.now();
   function iso(ago){var d=new Date(now-ago*day);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")}
-  function mk(payer,store,cat,total,part,ago){return {id:uid(),payerId:members[payer].id,store:store,category:cat,total:total,date:iso(ago),participants:part,shares:splitEqual(total,part),createdAt:now-ago*day-Math.floor(Math.random()*500000),createdBy:members[payer].id}}
+  function mk(payer,store,cat,total,part,ago){var py={};py[members[payer].id]=total;return {id:uid(),payerId:members[payer].id,payers:py,store:store,category:cat,total:total,date:iso(ago),participants:part,shares:splitEqual(total,part),createdAt:now-ago*day-Math.floor(Math.random()*500000),createdBy:members[payer].id}}
   var five=[3,0,4,5,6].map(function(i){return ids[i]});
+  var multi=mk(0,"Aluguel da garagem","aluguel",12000,[ids[0],ids[1],ids[2]],4);
+  multi.payers={};multi.payers[ids[0]]=7000;multi.payers[ids[1]]=5000;
+  var last=new Date(now);last=new Date(last.getFullYear(),last.getMonth()+1,0);
+  var due=last.getFullYear()+"-"+p2(last.getMonth()+1)+"-"+p2(last.getDate());
+  var pool={id:uid(),type:"pool",name:"Casa do mês",month:due.slice(0,7),total:420000,participants:ids,shares:splitEqual(420000,ids),keeper:ids[0],due:due,closed:false,createdAt:now-6*day,createdBy:ids[0]};
+  function pp(i,amt,st){return {id:uid(),kind:"poolpay",poolId:pool.id,from:ids[i],to:ids[0],amount:amt,by:st==="pending"?ids[i]:ids[0],status:st,createdAt:now-3*day,resolvedAt:st==="confirmed"?now-3*day:undefined}}
   return {house:{name:"Casa 12",members:members,demo:true,createdAt:now},
-    bills:[mk(0,"Tesco","mercado",7000,ids,2),mk(1,"Eir","internet",6300,ids,3),mk(2,"Electric Ireland","energia",8400,ids,5),mk(3,"Lidl","mercado",3850,five,1)],
-    settlements:[{id:uid(),kind:"payment",from:members[6].id,to:members[2].id,amount:1200,by:members[6].id,status:"pending",createdAt:now-5*3600000}]};
+    bills:[mk(0,"Tesco","mercado",7000,ids,2),mk(1,"Eir","internet",6300,ids,3),mk(2,"Electric Ireland","energia",8400,ids,5),mk(3,"Lidl","mercado",3850,five,1),multi,pool],
+    settlements:[{id:uid(),kind:"payment",from:members[6].id,to:members[2].id,amount:1200,by:members[6].id,status:"pending",createdAt:now-5*3600000},
+      pp(1,30000,"confirmed"),pp(1,30000,"confirmed"),pp(2,20000,"confirmed"),pp(3,10000,"pending")]};
 }
+
+/* ---------- ações ---------- */
 function forgetHouse(){LS.set("rc-hid","");LS.set("rc-code","");state.hid=null;state.house=null}
 function enterCloudHouse(hid,code){
   state.mode="cloud";state.hid=hid;LS.set("rc-hid",hid);
@@ -714,7 +1026,13 @@ document.addEventListener("click",function(e){
     case "pickme":me=id;LS.set(meKey(),id);ui.tab="inicio";render();break;
     case "switchme":me=null;LS.set(meKey(),"");render();break;
     case "tab":ui.tab=t.getAttribute("data-tab");window.scrollTo(0,0);render();break;
-    case "newbill":billSheet();break;
+    case "newbill":newSheet("bill");break;
+    case "sheet-mode":newSheet(t.getAttribute("data-mode"));break;
+    case "pool-open":poolSheet(id,false);break;
+    case "pool-del":poolSheet(id,true);break;
+    case "pool-pay":poolPaySheet(id,t.getAttribute("data-who"));break;
+    case "pool-toggle":{var pt=state.bills.find(function(x){return x.id===id});if(!pt)return;closeSheet();putDoc("bills",Object.assign({},pt,{closed:!pt.closed})).then(function(){toast(pt.closed?"Caixa reaberto.":"Caixa encerrado.")});break}
+    case "pool-del-yes":{closeSheet();var pend=state.settlements.filter(function(s){return s.kind==="poolpay"&&s.poolId===id});Promise.all(pend.map(function(s){return delDoc("settlements",s.id)})).then(function(){return delDoc("bills",id)}).then(function(){toast("Caixa excluído.")});break}
     case "close-sheet":closeSheet();break;
     case "markseen":LS.set("rc-seen-"+meKey()+"-"+me,String(Date.now()));render();break;
     case "pay-open":paySheet(t.getAttribute("data-mode"),id,parseInt(t.getAttribute("data-max"),10));break;
