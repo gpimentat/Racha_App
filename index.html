@@ -361,12 +361,18 @@ function delDoc(coll,id){
 }
 
 /* ---------- cálculo ---------- */
-function calc(){
+function curYM(){return todayISO().slice(0,7)}
+function ymOf(ts){var d=new Date(ts||Date.now());return d.getFullYear()+"-"+p2(d.getMonth()+1)}
+function billYM(b){return (b.date||ymOf(b.createdAt)).slice(0,7)}
+function setYM(s){return s.month||ymOf(s.createdAt)}
+function monthLabel(ym){try{var t=new Date(ym+"-15T12:00:00").toLocaleDateString("pt-BR",{month:"long",year:"numeric"});return t.charAt(0).toUpperCase()+t.slice(1)}catch(e){return ym}}
+function calc(ym){
+  ym=ym||curYM();
   var owed={},pend={};
   function add(a,b,v){var k=a+">"+b;owed[k]=(owed[k]||0)+v}
-  state.bills.forEach(function(b){if(isPool(b))return;billDebts(b).forEach(function(d){add(d.from,d.to,d.amt)})});
+  state.bills.forEach(function(b){if(isPool(b)||billYM(b)!==ym)return;billDebts(b).forEach(function(d){add(d.from,d.to,d.amt)})});
   state.settlements.forEach(function(s){
-    if(s.kind==="poolpay")return;
+    if(s.kind==="poolpay"||setYM(s)!==ym)return;
     if(s.status==="confirmed"){add(s.from,s.to,-s.amount);if(s.kind==="offset")add(s.to,s.from,-s.amount)}
     else if(s.status==="pending"&&s.kind==="payment"){var k=s.from+">"+s.to;pend[k]=(pend[k]||0)+s.amount}
   });
@@ -389,7 +395,7 @@ function rel(ts){
 function fmtDate(iso){try{return new Date(iso+"T12:00:00").toLocaleDateString("pt-BR",{day:"2-digit",month:"short"}).replace(".","")}catch(e){return iso}}
 function todayISO(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")}
 /* ---------- notinhas, pagadores e caixa mensal ---------- */
-var VERSION="v3 · 11 nov 2026";
+var VERSION="v4 · 13 nov 2026";
 function p2(n){return String(n).padStart(2,"0")}
 function isPool(b){return !!b&&b.type==="pool"}
 function byNewest(a,b){return (b.createdAt||0)-(a.createdAt||0)}
@@ -515,6 +521,48 @@ function poolCard(p){
   return '<button class="pool" data-act="pool-open" data-id="'+p.id+'"><div class="row"><span class="cat" style="--h:160">'+ic("home")+'</span><div class="grow"><b>'+esc(p.name)+'</b><small>Prazo '+fmtDate(p.due)+' · guarda: '+esc(nm(p.keeper))+'</small></div>'+pill+'</div>'+
     '<div class="bar-t"><i class="'+(pct>=100?'done':'')+'" style="width:'+pct+'%"></i></div><small>'+line+'</small></button>';
 }
+function debtBlocks(c,ym){
+  var members=state.house.members,others=members.filter(function(m){return m.id!==me}),out='';
+  var owe=[],get=[];
+  others.forEach(function(o){var a=O(c,me,o.id),b=O(c,o.id,me);if(a>0)owe.push({o:o,a:a});if(b>0)get.push({o:o,b:b})});
+  out+='<section class="sec"><div class="st"><h2>Você deve</h2></div><div class="group">';
+  if(!owe.length)out+='<div class="empty">Você não deve nada a ninguém.</div>';
+  else owe.forEach(function(r){
+    var pend=Pn(c,me,r.o.id),avail=r.a-pend;
+    var mine=state.settlements.filter(function(s){return s.status==="pending"&&s.kind==="payment"&&s.from===me&&s.to===r.o.id});
+    out+='<div class="item">'+av(r.o.id)+'<div class="grow"><b>'+esc(r.o.name)+'</b>'+(pend?'<small>'+fm(pend)+' aguardando confirmação</small>':'')+'</div><div class="end"><b class="owe">'+fm(r.a)+'</b></div></div>'+
+      '<div class="sub-actions">'+(avail>0?'<button class="btn sm" data-act="pay-open" data-ym="'+ym+'" data-mode="pay" data-id="'+esc(r.o.id)+'" data-max="'+avail+'">Marcar como pago</button>':'')+
+      mine.map(function(s){return '<button class="btn sm ghost" data-act="s-del" data-id="'+s.id+'">Cancelar envio de '+fm(s.amount)+'</button>'}).join("")+'</div>';
+  });
+  out+='</div></section>';
+
+  out+='<section class="sec"><div class="st"><h2>Te devem</h2></div><div class="group">';
+  if(!get.length)out+='<div class="empty">Ninguém deve nada a você agora.</div>';
+  else get.forEach(function(r){
+    out+='<div class="item">'+av(r.o.id)+'<div class="grow"><b>'+esc(r.o.name)+'</b></div><div class="end"><b class="get">'+fm(r.b)+'</b></div></div>'+
+      '<div class="sub-actions"><button class="btn sm soft" data-act="pay-open" data-ym="'+ym+'" data-mode="recv" data-id="'+esc(r.o.id)+'" data-max="'+r.b+'">Registrar recebimento</button></div>';
+  });
+  out+='</div></section>';
+
+  var offs=[];
+  others.forEach(function(o){
+    var a=O(c,me,o.id),b=O(c,o.id,me);
+    if(a>0&&b>0){
+      var pend=state.settlements.find(function(s){return s.kind==="offset"&&s.status==="pending"&&((s.from===me&&s.to===o.id)||(s.from===o.id&&s.to===me))});
+      offs.push({o:o,a:a,b:b,m:Math.min(a,b),pend:pend});
+    }
+  });
+  if(offs.length){
+    out+='<section class="sec"><div class="st"><h2>Abatimentos possíveis</h2></div>'+offs.map(function(x){
+      var act;
+      if(x.pend)act=x.pend.by===me?'<span class="pill wait">Aguardando '+esc(x.o.name)+'</span><button class="btn sm ghost" data-act="s-del" data-id="'+x.pend.id+'">Cancelar</button>':'<span class="pill wait">'+esc(x.o.name)+' propôs. Responda acima.</span>';
+      else act='<button class="btn sm" data-act="off-new" data-ym="'+ym+'" data-id="'+esc(x.o.id)+'">Propor abatimento de '+fm(x.m)+'</button>';
+      return '<div class="callout"><span class="av" style="--h:'+((idxOf(x.o.id)*47+20)%360)+';background:var(--card);color:var(--brand)">'+ic("swap")+'</span><div class="grow"><b>Compensar com '+esc(x.o.name)+'</b><small>Você deve '+fm(x.a)+' e '+esc(x.o.name)+' deve '+fm(x.b)+' a você.</small><div class="acts">'+act+'</div></div></div>';
+    }).join("")+'</section>';
+  }
+
+  return out;
+}
 function viewHome(c){
   var members=state.house.members,others=members.filter(function(m){return m.id!==me});
   var owe=[],get=[],iOwe=0,owedMe=0;
@@ -560,41 +608,11 @@ function viewHome(c){
     out+='<section class="sec"><div class="st"><h2>Caixa mensal</h2></div><div class="group">'+pools.map(poolCard).join("")+'</div></section>';
   }
 
-  out+='<section class="sec"><div class="st"><h2>Você deve</h2></div><div class="group">';
-  if(!owe.length)out+='<div class="empty">Você não deve nada a ninguém.</div>';
-  else owe.forEach(function(r){
-    var pend=Pn(c,me,r.o.id),avail=r.a-pend;
-    var mine=state.settlements.filter(function(s){return s.status==="pending"&&s.kind==="payment"&&s.from===me&&s.to===r.o.id});
-    out+='<div class="item">'+av(r.o.id)+'<div class="grow"><b>'+esc(r.o.name)+'</b>'+(pend?'<small>'+fm(pend)+' aguardando confirmação</small>':'')+'</div><div class="end"><b class="owe">'+fm(r.a)+'</b></div></div>'+
-      '<div class="sub-actions">'+(avail>0?'<button class="btn sm" data-act="pay-open" data-mode="pay" data-id="'+esc(r.o.id)+'" data-max="'+avail+'">Marcar como pago</button>':'')+
-      mine.map(function(s){return '<button class="btn sm ghost" data-act="s-del" data-id="'+s.id+'">Cancelar envio de '+fm(s.amount)+'</button>'}).join("")+'</div>';
-  });
-  out+='</div></section>';
-
-  out+='<section class="sec"><div class="st"><h2>Te devem</h2></div><div class="group">';
-  if(!get.length)out+='<div class="empty">Ninguém deve nada a você agora.</div>';
-  else get.forEach(function(r){
-    out+='<div class="item">'+av(r.o.id)+'<div class="grow"><b>'+esc(r.o.name)+'</b></div><div class="end"><b class="get">'+fm(r.b)+'</b></div></div>'+
-      '<div class="sub-actions"><button class="btn sm soft" data-act="pay-open" data-mode="recv" data-id="'+esc(r.o.id)+'" data-max="'+r.b+'">Registrar recebimento</button></div>';
-  });
-  out+='</div></section>';
-
-  var offs=[];
-  others.forEach(function(o){
-    var a=O(c,me,o.id),b=O(c,o.id,me);
-    if(a>0&&b>0){
-      var pend=state.settlements.find(function(s){return s.kind==="offset"&&s.status==="pending"&&((s.from===me&&s.to===o.id)||(s.from===o.id&&s.to===me))});
-      offs.push({o:o,a:a,b:b,m:Math.min(a,b),pend:pend});
-    }
-  });
-  if(offs.length){
-    out+='<section class="sec"><div class="st"><h2>Abatimentos possíveis</h2></div>'+offs.map(function(x){
-      var act;
-      if(x.pend)act=x.pend.by===me?'<span class="pill wait">Aguardando '+esc(x.o.name)+'</span><button class="btn sm ghost" data-act="s-del" data-id="'+x.pend.id+'">Cancelar</button>':'<span class="pill wait">'+esc(x.o.name)+' propôs. Responda acima.</span>';
-      else act='<button class="btn sm" data-act="off-new" data-id="'+esc(x.o.id)+'">Propor abatimento de '+fm(x.m)+'</button>';
-      return '<div class="callout"><span class="av" style="--h:'+((idxOf(x.o.id)*47+20)%360)+';background:var(--card);color:var(--brand)">'+ic("swap")+'</span><div class="grow"><b>Compensar com '+esc(x.o.name)+'</b><small>Você deve '+fm(x.a)+' e '+esc(x.o.name)+' deve '+fm(x.b)+' a você.</small><div class="acts">'+act+'</div></div></div>';
-    }).join("")+'</section>';
-  }
+  var oldDebt=0,cur=curYM(),mset={};
+  notinhasForMe().forEach(function(b){var k=billYM(b);if(k<cur)mset[k]=1});
+  Object.keys(mset).forEach(function(k){var cm=calc(k);members.forEach(function(m){if(m.id!==me)oldDebt+=O(cm,me,m.id)})});
+  if(oldDebt>0)out+='<div class="callout alert"><div class="grow"><b>Você ainda deve '+fm(oldDebt)+' de meses anteriores</b><div class="acts"><button class="btn sm" data-act="month-go">Ver meses anteriores</button></div></div></div>';
+  out+=debtBlocks(c,curYM());
 
   var nets=members.map(function(m){return {m:m,n:netOf(c,m.id)}});
   var mx=Math.max.apply(null,nets.map(function(x){return Math.abs(x.n)}).concat([1]));
@@ -607,7 +625,8 @@ function viewHome(c){
   return out;
 }
 function viewBills(){
-  var list=notinhasForMe(),pools=poolsForMe(),now=new Date(),ym=now.getFullYear()+"-"+p2(now.getMonth()+1);
+  if(ui.month)return viewMonth(ui.month);
+  var ym=curYM(),all=notinhasForMe(),list=all.filter(function(b){return billYM(b)===ym}),pools=poolsForMe().filter(function(p){return !p.closed||p.month===ym});
   var mine=0;
   list.forEach(function(b){if((b.date||"").indexOf(ym)===0)mine+=(b.shares&&b.shares[me])||0});
   pools.forEach(function(p){if((p.month||"")===ym&&(p.participants||[]).indexOf(me)>-1)mine+=poolShare(p,me)});
@@ -623,7 +642,37 @@ function viewBills(){
     return '<button class="item" data-act="bill-open" data-id="'+b.id+'"><span class="cat" style="--h:'+(CATH[b.category]||150)+'">'+ic(b.category)+'</span>'+
       '<div class="grow"><b>'+esc(b.store)+'</b><small>'+fmtDate(b.date)+' · pago por '+esc(payersText(b))+' · '+(b.participants||[]).length+' pessoas</small></div><div class="end"><b>'+fm(b.total)+'</b>'+end+'</div></button>';
   }).join("");
-  return out+'</div></section>';
+  out+='</div></section>';
+  var past={};
+  all.forEach(function(b){var k=billYM(b);if(k<ym)past[k]=1});
+  var keys=Object.keys(past).sort().reverse();
+  if(keys.length){
+    out+='<section class="sec"><div class="st"><h2>Meses anteriores</h2></div><div class="group">'+keys.map(function(k){
+      var cm=calc(k),io=0,om=0,tot=0;
+      state.house.members.forEach(function(m){if(m.id!==me){io+=O(cm,me,m.id);om+=O(cm,m.id,me)}});
+      all.forEach(function(b){if(billYM(b)===k)tot+=b.total});
+      var st=io>0?'<b class="owe">deve '+fm(io)+'</b>':om>0?'<b class="get">recebe '+fm(om)+'</b>':'<span class="pill">em dia</span>';
+      return '<button class="item" data-act="month-open" data-ym="'+k+'"><span class="cat" style="--h:215">'+ic("clock")+'</span><div class="grow"><b>'+esc(monthLabel(k))+'</b><small>Total das contas '+fm(tot)+'</small></div><div class="end">'+st+'</div></button>';
+    }).join("")+'</div></section>';
+  }
+  return out;
+}
+function viewMonth(ym){
+  var all=notinhasForMe().filter(function(b){return billYM(b)===ym}),c=calc(ym),members=state.house.members;
+  var tot=0,io=0,om=0;all.forEach(function(b){tot+=b.total});
+  members.forEach(function(m){if(m.id!==me){io+=O(c,me,m.id);om+=O(c,m.id,me)}});
+  var out='<button class="link" data-act="month-back" style="margin:4px 0 12px">← Voltar para Contas</button>'+
+    '<section class="hero" style="padding-bottom:20px"><div class="lbl">Total das contas em '+esc(monthLabel(ym))+'</div><div class="amount">'+fm(tot)+'</div><div class="sub">'+all.length+' '+(all.length===1?"notinha":"notinhas")+'</div>'+
+    '<div class="chips"><div class="glass"><small>Você deve</small><b>'+fm(io)+'</b></div><div class="glass"><small>Te devem</small><b>'+fm(om)+'</b></div></div></section>';
+  out+=debtBlocks(c,ym);
+  var pairs=[];
+  members.forEach(function(a){members.forEach(function(b){if(a.id!==b.id){var v=O(c,a.id,b.id);if(v>0)pairs.push({a:a.id,b:b.id,v:v})}})});
+  out+='<section class="sec"><div class="st"><h2>Quem deve a quem</h2></div><div class="group">'+(pairs.length?pairs.map(function(p){return '<div class="item">'+av(p.a)+'<div class="grow"><b>'+esc(nm(p.a))+' deve a '+esc(nm(p.b))+'</b></div><div class="end"><b>'+fm(p.v)+'</b></div></div>'}).join(""):'<div class="empty">Nenhuma dívida em aberto neste mês.</div>')+'</div></section>';
+  out+='<section class="sec"><div class="st"><h2>Notinhas do mês</h2></div><div class="group">'+(all.length?all.map(function(b){
+    var pa=payersOf(b)[me]||0,sh=(b.shares&&b.shares[me])||0;
+    return '<button class="item" data-act="bill-open" data-id="'+b.id+'"><span class="cat" style="--h:'+(CATH[b.category]||150)+'">'+ic(b.category)+'</span><div class="grow"><b>'+esc(b.store)+'</b><small>'+fmtDate(b.date)+' · pago por '+esc(payersText(b))+'</small></div><div class="end"><b>'+fm(b.total)+'</b>'+(pa>0?'<span class="pill">você pagou '+fm(pa)+'</span>':sh?'<small>sua parte '+fm(sh)+'</small>':'')+'</div></button>';
+  }).join(""):'<div class="empty">Sem notinhas neste mês.</div>')+'</div></section>';
+  return out;
 }
 function statusPill(s){
   if(s.status==="confirmed")return '<span class="pill">confirmado</span>';
@@ -738,7 +787,8 @@ function closeSheet(quick){
   var s=$("#sheet"),b=$("#scrim");if(s)s.classList.remove("open");if(b)b.classList.remove("open");
   setTimeout(function(){if(!$("#sheet.open"))l.innerHTML=""},300);
 }
-function paySheet(mode,other,max){
+function paySheet(mode,other,max,ym){
+  ym=ym||curYM();
   var title=mode==="pay"?"Pagar a "+nm(other):"Receber de "+nm(other);
   openSheet('<h2>'+esc(title)+'</h2><p class="lead">'+(mode==="pay"?esc(nm(other))+" vai confirmar o recebimento.":"O valor entra como recebido na hora.")+'</p>'+
     '<form class="stack" id="pay-form" data-mode="'+mode+'" data-other="'+esc(other)+'">'+
@@ -748,11 +798,11 @@ function paySheet(mode,other,max){
       $("#pay-form").addEventListener("click",function(e){var b=e.target.closest("[data-fill]");if(b){$("#p-amt").value=toInput(parseInt(b.getAttribute("data-fill"),10))}});
       $("#pay-form").addEventListener("submit",function(e){
         e.preventDefault();
-        var amt=parseMoney($("#p-amt").value),c=calc(),err=$("#p-err");
+        var amt=parseMoney($("#p-amt").value),c=calc(ym),err=$("#p-err");
         var cap=mode==="pay"?O(c,me,other)-Pn(c,me,other):O(c,other,me);
         if(amt<=0){err.textContent="Informe um valor maior que zero.";return}
         if(amt>cap){err.textContent="O valor passa do que está em aberto ("+fm(cap)+").";return}
-        var s=mode==="pay"?{id:uid(),kind:"payment",from:me,to:other,amount:amt,by:me,status:"pending",createdAt:Date.now()}:{id:uid(),kind:"payment",from:other,to:me,amount:amt,by:me,status:"confirmed",createdAt:Date.now(),resolvedAt:Date.now()};
+        var s=mode==="pay"?{id:uid(),kind:"payment",month:ym,from:me,to:other,amount:amt,by:me,status:"pending",createdAt:Date.now()}:{id:uid(),kind:"payment",month:ym,from:other,to:me,amount:amt,by:me,status:"confirmed",createdAt:Date.now(),resolvedAt:Date.now()};
         closeSheet();
         putDoc("settlements",s).then(function(){toast(mode==="pay"?"Enviado. "+nm(other)+" vai confirmar.":"Recebimento registrado.")});
       });
@@ -1025,7 +1075,7 @@ document.addEventListener("click",function(e){
     case "createhouse":createHouse();break;
     case "pickme":me=id;LS.set(meKey(),id);ui.tab="inicio";render();break;
     case "switchme":me=null;LS.set(meKey(),"");render();break;
-    case "tab":ui.tab=t.getAttribute("data-tab");window.scrollTo(0,0);render();break;
+    case "tab":ui.tab=t.getAttribute("data-tab");ui.month=null;window.scrollTo(0,0);render();break;
     case "newbill":newSheet("bill");break;
     case "sheet-mode":newSheet(t.getAttribute("data-mode"));break;
     case "pool-open":poolSheet(id,false);break;
@@ -1035,16 +1085,19 @@ document.addEventListener("click",function(e){
     case "pool-del-yes":{closeSheet();var pend=state.settlements.filter(function(s){return s.kind==="poolpay"&&s.poolId===id});Promise.all(pend.map(function(s){return delDoc("settlements",s.id)})).then(function(){return delDoc("bills",id)}).then(function(){toast("Caixa excluído.")});break}
     case "close-sheet":closeSheet();break;
     case "markseen":LS.set("rc-seen-"+meKey()+"-"+me,String(Date.now()));render();break;
-    case "pay-open":paySheet(t.getAttribute("data-mode"),id,parseInt(t.getAttribute("data-max"),10));break;
+    case "pay-open":paySheet(t.getAttribute("data-mode"),id,parseInt(t.getAttribute("data-max"),10),t.getAttribute("data-ym"));break;
+    case "month-open":ui.month=t.getAttribute("data-ym");window.scrollTo(0,0);render();break;
+    case "month-back":ui.month=null;window.scrollTo(0,0);render();break;
+    case "month-go":ui.tab="notinhas";ui.month=null;window.scrollTo(0,0);render();break;
     case "pay-ok":setStatus(id,"confirmed").then(function(){toast("Pagamento confirmado.")});break;
     case "s-no":setStatus(id,"rejected").then(function(){toast("Resposta enviada.")});break;
     case "s-del":delDoc("settlements",id).then(function(){toast("Cancelado.")});break;
     case "off-new":{
-      var m=Math.min(O(c,me,id),O(c,id,me));if(m<=0)return;
-      putDoc("settlements",{id:uid(),kind:"offset",from:me,to:id,amount:m,by:me,status:"pending",createdAt:Date.now()}).then(function(){toast("Proposta enviada para "+nm(id)+".")});break}
+      var oy=t.getAttribute("data-ym")||curYM(),co=calc(oy),m=Math.min(O(co,me,id),O(co,id,me));if(m<=0)return;
+      putDoc("settlements",{id:uid(),kind:"offset",month:oy,from:me,to:id,amount:m,by:me,status:"pending",createdAt:Date.now()}).then(function(){toast("Proposta enviada para "+nm(id)+".")});break}
     case "off-ok":{
       var so=state.settlements.find(function(x){return x.id===id});if(!so)return;
-      var m2=Math.min(O(c,so.from,so.to),O(c,so.to,so.from),so.amount);
+      var cs=calc(setYM(so)),m2=Math.min(O(cs,so.from,so.to),O(cs,so.to,so.from),so.amount);
       if(m2<=0){setStatus(id,"rejected").then(function(){toast("Este abatimento já não é mais necessário.")});return}
       putDoc("settlements",Object.assign({},so,{amount:m2,status:"confirmed",resolvedAt:Date.now()})).then(function(){toast("Abatimento de "+fm(m2)+" aplicado.")});break}
     case "bill-open":billDetail(id,false);break;
