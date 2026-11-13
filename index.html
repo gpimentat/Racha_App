@@ -218,6 +218,7 @@ svg{display:block}
 .memrow small{color:var(--muted);font-size:13px;display:block}
 .labelrow{display:flex;justify-content:space-between;align-items:center;gap:8px}
 
+.monthnav{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:4px 0 12px}.monthnav b{font-size:17px}.monthnav .btn{min-width:44px}
 </style>
 </head>
 <body>
@@ -257,6 +258,7 @@ var P={
   clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   users:'<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6"/><circle cx="17.5" cy="9" r="2.5"/><path d="M17 14.2c2.5.3 4 2.2 4 5"/>',
   plus:'<path d="M12 5v14M5 12h14"/>',
+  wallet:'<path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H19v14H6.5A2.5 2.5 0 0 1 4 16.5z"/><path d="M19 9.5h-4a2 2 0 0 0 0 4h4"/>',
   back:'<path d="M15 5l-7 7 7 7"/>',
   swap:'<path d="M7 7h12l-3-3M17 17H5l3 3"/>',
   check:'<path d="M5 12.5l4.5 4.5L19 7.5"/>',
@@ -395,7 +397,7 @@ function rel(ts){
 function fmtDate(iso){try{return new Date(iso+"T12:00:00").toLocaleDateString("pt-BR",{day:"2-digit",month:"short"}).replace(".","")}catch(e){return iso}}
 function todayISO(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")}
 /* ---------- notinhas, pagadores e caixa mensal ---------- */
-var VERSION="v4 · 13 nov 2026";
+var VERSION="v5 · 13 nov 2026";
 function p2(n){return String(n).padStart(2,"0")}
 function isPool(b){return !!b&&b.type==="pool"}
 function byNewest(a,b){return (b.createdAt||0)-(a.createdAt||0)}
@@ -727,6 +729,7 @@ function viewHouse(){
     out+='<section class="sec"><div class="st"><h2>Convidar moradores</h2></div><div class="group" style="padding:14px;display:grid;gap:12px"><div class="codebox"><div><div class="eyebrow">Código de acesso</div><b>'+esc(state.code)+'</b></div><button class="btn sm soft" data-act="copy-invite">'+ic("copy")+'Copiar convite</button></div>'+
       '<small class="muted">O convite leva o link do app e o código. Cada morador entra, digita o código e escolhe o próprio nome.</small></div></section>';
   }
+  out+='<section class="sec"><button class="btn ghost block" data-act="tab" data-tab="atividade">Ver atividade da casa</button></section>';
   out+='<section class="sec"><div class="st"><h2>Moradores</h2></div><div class="group">'+h.members.map(function(m){
     return '<div class="item">'+av(m.id)+'<div class="grow"><b>'+esc(m.name)+(m.id===me?' <span class="pill">você</span>':'')+'</b></div>'+
       (used[m.id]?'<small>com histórico</small>':'<button class="btn sm danger" data-act="mem-rm" data-id="'+m.id+'" aria-label="Remover '+esc(m.name)+'">Remover</button>')+'</div>';
@@ -746,9 +749,9 @@ function viewHouse(){
   return out;
 }
 function navHtml(badge){
-  function tab(id,label,icon){return '<button class="tab" data-act="tab" data-tab="'+id+'" '+(ui.tab===id?'aria-current="page"':'')+'>'+ic(icon)+'<span>'+label+'</span>'+(id==="inicio"&&badge?'<span class="badge">'+badge+'</span>':'')+'</button>'}
+  function tab(id,label,icon){return '<button class="tab" data-act="tab" data-tab="'+id+'" '+((ui.tab===id||(id==="casa"&&ui.tab==="atividade"))?'aria-current="page"':'')+'>'+ic(icon)+'<span>'+label+'</span>'+(id==="inicio"&&badge?'<span class="badge">'+badge+'</span>':'')+'</button>'}
   return '<nav class="nav" aria-label="Principal">'+tab("inicio","Início","home")+tab("notinhas","Contas","receipt")+
-    '<button class="fab" data-act="newbill" aria-label="Novo lançamento">'+ic("plus")+'</button>'+tab("atividade","Atividade","clock")+tab("casa","Casa","users")+'</nav>';
+    '<button class="fab" data-act="newbill" aria-label="Novo lançamento">'+ic("plus")+'</button>'+tab("financas","Finanças","wallet")+tab("casa","Casa","users")+'</nav>';
 }
 
 function render(){
@@ -759,7 +762,7 @@ function render(){
   }
   if(!me||idxOf(me)<0){root.innerHTML=viewPickMe();return}
   var c=calc(),badge=pendingFor().length+newBillsForMe().length;
-  var body=ui.tab==="inicio"?viewHome(c):ui.tab==="notinhas"?viewBills():ui.tab==="atividade"?viewActivity():viewHouse();
+  var body=ui.tab==="inicio"?viewHome(c):ui.tab==="notinhas"?viewBills():ui.tab==="atividade"?viewActivity():ui.tab==="financas"?viewFin():viewHouse();
   var first=nm(me).split(" ")[0];
   var head='<header class="head">'+av(me)+'<div class="who"><small>'+esc(state.house.name)+'</small><h1>Olá, '+esc(first)+'</h1></div></header>';
   root.innerHTML='<div class="app"><div class="fade" id="page">'+head+body+'</div></div>'+navHtml(badge);
@@ -1048,6 +1051,190 @@ function demoData(){
       pp(1,30000,"confirmed"),pp(1,30000,"confirmed"),pp(2,20000,"confirmed"),pp(3,10000,"pending")]};
 }
 
+/* ---------- finanças pessoais (ficam só neste aparelho) ---------- */
+var fin=null,finKey="";
+function finGet(){
+  var k="rc-fin-"+meKey()+"-"+me;
+  if(fin&&finKey===k)return fin;
+  finKey=k;
+  try{fin=JSON.parse(LS.get(k)||"null")}catch(e){fin=null}
+  if(!fin||typeof fin!=="object")fin={};
+  fin.jobs=fin.jobs||[];fin.income=fin.income||[];fin.expenses=fin.expenses||[];fin.goals=fin.goals||[];
+  return fin;
+}
+function finSave(){LS.set(finKey,JSON.stringify(fin));render()}
+function finMonth(){return ui.finMonth||curYM()}
+function shiftYM(ym,d){var p=ym.split("-"),dt=new Date(parseInt(p[0],10),parseInt(p[1],10)-1+d,1);return dt.getFullYear()+"-"+p2(dt.getMonth()+1)}
+function jobName(id){var j=finGet().jobs.find(function(x){return x.id===id});return j?j.name:"Sem emprego"}
+function houseOwedTotal(){
+  var months={},tot=0;months[curYM()]=1;
+  state.bills.forEach(function(b){if(!isPool(b))months[billYM(b)]=1});
+  Object.keys(months).forEach(function(k){var c=calc(k);memberIds().forEach(function(id){if(id!==me)tot+=O(c,me,id)})});
+  poolsForMe().forEach(function(p){if(!p.closed&&(p.participants||[]).indexOf(me)>-1)tot+=poolRemaining(p,me)});
+  return tot;
+}
+function housePaidList(ym){
+  return state.settlements.filter(function(s){
+    return s.from===me&&(s.status==="confirmed"||s.status==="pending")&&(s.kind==="payment"||s.kind==="poolpay")&&ymOf(s.createdAt)===ym;
+  });
+}
+function sumBy(list,f){return list.reduce(function(a,x){return a+f(x)},0)}
+function goalSaved(g){return sumBy(g.deposits||[],function(d){return d.amount})}
+
+function viewFin(){
+  var f=finGet(),ym=finMonth();
+  var inc=f.income.filter(function(x){return (x.date||"").slice(0,7)===ym}).sort(function(a,b){return b.date<a.date?-1:1});
+  var exp=f.expenses.filter(function(x){return (x.date||"").slice(0,7)===ym}).sort(function(a,b){return b.date<a.date?-1:1});
+  var hp=housePaidList(ym);
+  var tIn=sumBy(inc,function(x){return x.amount}),tExp=sumBy(exp,function(x){return x.amount}),tHouse=sumBy(hp,function(s){return s.amount});
+  var out=tExp+tHouse,bal=tIn-out,owed=houseOwedTotal(),after=bal-owed;
+  var o='<div class="banner"><span>Só você vê esta aba. Os dados ficam salvos neste aparelho.</span></div>';
+  o+='<div class="monthnav"><button class="btn sm ghost" data-act="fin-month" data-d="-1" aria-label="Mês anterior">‹</button><b>'+esc(monthLabel(ym))+'</b><button class="btn sm ghost" data-act="fin-month" data-d="1" aria-label="Próximo mês">›</button></div>';
+  o+='<section class="hero"><div class="lbl">Saldo do mês</div><div class="amount">'+(bal<0?"−":"")+fm(Math.abs(bal))+'</div><div class="sub">Entradas menos saídas já pagas</div>'+
+    '<div class="chips"><div class="glass"><small>Entradas</small><b>'+fm(tIn)+'</b></div><div class="glass"><small>Saídas</small><b>'+fm(out)+'</b></div>'+
+    '<div class="glass wide"><small>Ainda a pagar na casa</small><b>'+fm(owed)+'</b></div>'+
+    '<div class="glass wide"><small>Sobra prevista depois de pagar tudo</small><b>'+(after<0?"−":"")+fm(Math.abs(after))+'</b></div></div></section>';
+  o+='<section class="sec" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" data-act="fin-income">+ Entrada</button><button class="btn sm soft" data-act="fin-expense">+ Saída</button><button class="btn sm soft" data-act="fin-goal-new">+ Meta</button></section>';
+
+  o+='<section class="sec"><div class="st"><h2>Empregos e rendas</h2></div><div class="group">';
+  if(!f.jobs.length)o+='<div class="empty"><p>Cadastre seus empregos ao lançar a primeira entrada.</p></div>';
+  else o+=f.jobs.map(function(j){
+    var v=sumBy(inc.filter(function(x){return x.jobId===j.id}),function(x){return x.amount}),pct=tIn>0?Math.round(v/tIn*100):0;
+    var used=f.income.some(function(x){return x.jobId===j.id});
+    return '<div class="pool" style="cursor:default"><div class="row"><div class="grow"><b>'+esc(j.name)+'</b><small>'+(v?pct+'% das entradas do mês':'Nada recebido neste mês')+'</small></div><b class="get" style="flex:none">'+fm(v)+'</b>'+(used?'':'<button class="minilink" data-act="fin-job-del" data-id="'+j.id+'" aria-label="Remover '+esc(j.name)+'">Remover</button>')+'</div><div class="bar-t"><i style="width:'+pct+'%"></i></div></div>';
+  }).join("");
+  o+='</div></section>';
+
+  o+='<section class="sec"><div class="st"><h2>Entradas do mês</h2></div><div class="group">'+(inc.length?inc.map(function(x){
+    return '<div class="item"><span class="cat" style="--h:150">'+ic("plus")+'</span><div class="grow"><b>'+esc(jobName(x.jobId))+'</b><small>'+fmtDate(x.date)+(x.note?' · '+esc(x.note):'')+'</small></div><div class="end"><b class="get">+'+fm(x.amount)+'</b><button class="minilink" data-act="fin-del" data-k="income" data-id="'+x.id+'">Excluir</button></div></div>';
+  }).join(""):'<div class="empty"><p>Nenhuma entrada neste mês.</p></div>')+'</div></section>';
+
+  o+='<section class="sec"><div class="st"><h2>Saídas do mês</h2></div><div class="group">';
+  var rows=exp.map(function(x){
+    return '<div class="item"><span class="cat" style="--h:'+(CATH[x.category]||150)+'">'+ic(x.category)+'</span><div class="grow"><b>'+esc(x.name)+'</b><small>'+fmtDate(x.date)+' · '+esc(CAT[x.category]||"Outros")+'</small></div><div class="end"><b class="owe">−'+fm(x.amount)+'</b><button class="minilink" data-act="fin-del" data-k="expenses" data-id="'+x.id+'">Excluir</button></div></div>';
+  }).concat(hp.map(function(s){
+    var pl=s.kind==="poolpay"?state.bills.find(function(b){return b.id===s.poolId}):null;
+    return '<div class="item"><span class="cat" style="--h:215">'+ic("home")+'</span><div class="grow"><b>'+(pl?'Caixa '+esc(pl.name):'Pagamento a '+esc(nm(s.to)))+'</b><small>Casa · '+fmtDate(ymOf(s.createdAt)+"-"+p2(new Date(s.createdAt).getDate()))+(s.status==="pending"?' · aguardando confirmação':'')+'</small></div><div class="end"><b class="owe">−'+fm(s.amount)+'</b></div></div>';
+  }));
+  o+=(rows.length?rows.join(""):'<div class="empty"><p>Nenhuma saída neste mês.</p></div>')+'</div></section>';
+
+  var saved=sumBy(f.goals,goalSaved);
+  o+='<section class="sec"><div class="st"><h2>Metas e reservas</h2><span class="muted" style="font-size:13px;font-weight:700">Guardado '+fm(saved)+'</span></div><div class="group">';
+  if(!f.goals.length)o+='<div class="empty"><p>Crie uma meta para guardar dinheiro e diga onde ele está.</p></div>';
+  else o+=f.goals.map(function(g){
+    var sv=goalSaved(g),pct=g.target>0?Math.min(100,Math.round(sv/g.target*100)):0,rem=Math.max(0,g.target-sv),extra='';
+    if(g.deadline&&rem>0){var ml=Math.max(1,(parseInt(g.deadline.slice(0,4),10)-parseInt(curYM().slice(0,4),10))*12+parseInt(g.deadline.slice(5,7),10)-parseInt(curYM().slice(5,7),10)+1);extra=' · ~'+fm(Math.ceil(rem/ml))+'/mês até '+fmtDate(g.deadline)}
+    return '<button class="pool" data-act="fin-goal" data-id="'+g.id+'"><div class="row"><div class="grow"><b>'+esc(g.name)+'</b><small>'+(g.where?'Guardado em '+esc(g.where):'Local não informado')+'</small></div>'+(pct>=100?'<span class="pill">meta batida</span>':'<span class="pill wait">falta '+fm(rem)+'</span>')+'</div><div class="bar-t"><i class="'+(pct>=100?'done':'')+'" style="width:'+pct+'%"></i></div><small>'+fm(sv)+' de '+fm(g.target)+extra+'</small></button>';
+  }).join("");
+  o+='</div></section>';
+
+  o+='<section class="sec"><div class="st"><h2>Backup</h2></div><div class="group" style="padding:14px;display:grid;gap:10px"><small class="muted">Como os dados ficam só neste aparelho, baixe uma cópia de vez em quando. Dá para restaurar em outro aparelho.</small><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm soft" data-act="fin-export">Baixar backup</button><button class="btn sm ghost" data-act="fin-import">Restaurar backup</button></div></div></section>';
+  return o;
+}
+
+function incomeSheet(){
+  var f=finGet(),newJob=!f.jobs.length;
+  openSheet('<h2>Nova entrada</h2><p class="lead">Quanto caiu na sua conta e de qual emprego.</p><form class="stack" id="in-form" novalidate>'+
+    '<div class="field"><label for="i-amt">Valor (€)</label><input id="i-amt" class="bigmoney" inputmode="decimal" placeholder="0,00" autocomplete="off"></div>'+
+    '<div class="field"><label for="i-job">Emprego ou fonte</label><select id="i-job">'+f.jobs.map(function(j){return '<option value="'+j.id+'">'+esc(j.name)+'</option>'}).join("")+'<option value="__new">+ Novo emprego</option></select></div>'+
+    '<div class="field" id="i-newwrap" '+(newJob?'':'hidden')+'><label for="i-new">Nome do emprego</label><input id="i-new" placeholder="Ex.: Hotel, Barbearia, Entregas" autocomplete="off"></div>'+
+    '<div class="grid2"><div class="field"><label for="i-date">Data</label><input id="i-date" type="date" value="'+todayISO()+'"></div><div class="field"><label for="i-note">Observação</label><input id="i-note" placeholder="Opcional" autocomplete="off"></div></div>'+
+    '<div class="err" id="i-err" role="alert"></div><button class="btn block" type="submit">Salvar entrada</button></form>',function(){
+      var sel=$("#i-job");if(newJob)sel.value="__new";
+      sel.addEventListener("change",function(){$("#i-newwrap").hidden=sel.value!=="__new"});
+      $("#in-form").addEventListener("submit",function(e){
+        e.preventDefault();
+        var amt=parseMoney($("#i-amt").value),date=$("#i-date").value,err=$("#i-err"),jid=sel.value;
+        if(amt<=0){err.textContent="Informe o valor recebido.";return}
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){err.textContent="Informe a data.";return}
+        if(jid==="__new"){
+          var n=($("#i-new").value||"").trim();if(!n){err.textContent="Dê um nome ao emprego.";return}
+          var ex=f.jobs.find(function(j){return j.name.toLowerCase()===n.toLowerCase()});
+          if(ex)jid=ex.id;else{jid=uid();f.jobs.push({id:jid,name:n})}
+        }
+        f.income.push({id:uid(),jobId:jid,amount:amt,date:date,note:($("#i-note").value||"").trim()});
+        ui.finMonth=date.slice(0,7);closeSheet();finSave();toast("Entrada registrada.");
+      });
+      setTimeout(function(){var i=$("#i-amt");if(i)i.focus()},350);
+    });
+}
+function expenseSheet(){
+  openSheet('<h2>Nova saída</h2><p class="lead">Um gasto seu, fora da divisão da casa. Os pagamentos da casa entram sozinhos.</p><form class="stack" id="ex-form" novalidate>'+
+    '<div class="field"><label for="x-amt">Valor (€)</label><input id="x-amt" class="bigmoney" inputmode="decimal" placeholder="0,00" autocomplete="off"></div>'+
+    '<div class="field"><label for="x-name">Descrição</label><input id="x-name" placeholder="Ex.: Celular, passagem" autocomplete="off"></div>'+
+    '<div class="grid2"><div class="field"><label for="x-cat">Categoria</label><select id="x-cat">'+CATS.map(function(c){return '<option value="'+c[0]+'">'+c[1]+'</option>'}).join("")+'</select></div><div class="field"><label for="x-date">Data</label><input id="x-date" type="date" value="'+todayISO()+'"></div></div>'+
+    '<div class="err" id="x-err" role="alert"></div><button class="btn block" type="submit">Salvar saída</button></form>',function(){
+      $("#ex-form").addEventListener("submit",function(e){
+        e.preventDefault();
+        var amt=parseMoney($("#x-amt").value),name=($("#x-name").value||"").trim(),date=$("#x-date").value,err=$("#x-err");
+        if(amt<=0){err.textContent="Informe o valor.";return}
+        if(!name){err.textContent="Informe uma descrição.";return}
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){err.textContent="Informe a data.";return}
+        finGet().expenses.push({id:uid(),name:name,amount:amt,category:$("#x-cat").value,date:date});
+        ui.finMonth=date.slice(0,7);closeSheet();finSave();toast("Saída registrada.");
+      });
+      setTimeout(function(){var i=$("#x-amt");if(i)i.focus()},350);
+    });
+}
+function goalNewSheet(){
+  openSheet('<h2>Nova meta</h2><p class="lead">Quanto você quer guardar e onde o dinheiro fica.</p><form class="stack" id="g-form" novalidate>'+
+    '<div class="field"><label for="g-name">Objetivo</label><input id="g-name" placeholder="Ex.: Reserva de emergência, viagem" autocomplete="off"></div>'+
+    '<div class="field"><label for="g-target">Valor da meta (€)</label><input id="g-target" class="bigmoney" inputmode="decimal" placeholder="0,00" autocomplete="off"></div>'+
+    '<div class="field"><label for="g-where">Onde está guardando</label><input id="g-where" placeholder="Ex.: Revolut, poupança, dinheiro em casa" autocomplete="off"></div>'+
+    '<div class="grid2"><div class="field"><label for="g-saved">Já guardado (€)</label><input id="g-saved" inputmode="decimal" placeholder="0,00" autocomplete="off"></div><div class="field"><label for="g-due">Prazo</label><input id="g-due" type="date"></div></div>'+
+    '<div class="err" id="g-err" role="alert"></div><button class="btn block" type="submit">Criar meta</button></form>',function(){
+      $("#g-form").addEventListener("submit",function(e){
+        e.preventDefault();
+        var name=($("#g-name").value||"").trim(),t=parseMoney($("#g-target").value),sv=parseMoney($("#g-saved").value),err=$("#g-err");
+        if(!name){err.textContent="Dê um nome à meta.";return}
+        if(t<=0){err.textContent="Informe o valor da meta.";return}
+        var g={id:uid(),name:name,target:t,where:($("#g-where").value||"").trim(),deadline:$("#g-due").value||"",deposits:[]};
+        if(sv>0)g.deposits.push({id:uid(),amount:sv,date:todayISO()});
+        finGet().goals.push(g);closeSheet();finSave();toast("Meta criada.");
+      });
+      setTimeout(function(){var i=$("#g-name");if(i)i.focus()},350);
+    });
+}
+function goalSheet(id,confirmDel){
+  var g=finGet().goals.find(function(x){return x.id===id});if(!g)return;
+  var sv=goalSaved(g),pct=g.target>0?Math.min(100,Math.round(sv/g.target*100)):0;
+  var hist=(g.deposits||[]).slice().reverse().slice(0,6).map(function(d){return '<div class="rl"><span>'+fmtDate(d.date)+(d.amount<0?' · retirada':' · guardado')+'</span><b class="num">'+(d.amount<0?"−":"+")+fm(Math.abs(d.amount))+'</b></div>'}).join("");
+  openSheet('<h2>'+esc(g.name)+'</h2><p class="lead">'+(g.where?'Guardado em '+esc(g.where)+'. ':'')+fm(sv)+' de '+fm(g.target)+' ('+pct+'%)</p><div class="bar-t" style="margin-bottom:14px"><i class="'+(pct>=100?'done':'')+'" style="width:'+pct+'%"></i></div>'+
+    '<form class="stack" id="gd-form" data-id="'+g.id+'" novalidate><div class="field"><label for="gd-amt">Valor (€)</label><input id="gd-amt" class="bigmoney" inputmode="decimal" placeholder="0,00" autocomplete="off"></div>'+
+    '<div class="err" id="gd-err" role="alert"></div><div style="display:flex;gap:10px"><button class="btn" type="button" data-act="goal-in" data-id="'+g.id+'" style="flex:1">Guardar</button><button class="btn ghost" type="button" data-act="goal-out" data-id="'+g.id+'" style="flex:1">Retirar</button></div></form>'+
+    (hist?'<p class="lead" style="margin-top:16px">Últimos movimentos</p><div class="receipt">'+hist+'</div>':'')+
+    (confirmDel?'<p style="font-weight:700;margin:14px 0 10px">Excluir esta meta e o histórico dela?</p><div style="display:flex;gap:10px"><button class="btn danger" data-act="goal-del-yes" data-id="'+g.id+'" style="flex:1">Excluir</button><button class="btn ghost" data-act="fin-goal" data-id="'+g.id+'" style="flex:1">Manter</button></div>':'<button class="btn danger block" style="margin-top:14px" data-act="goal-del" data-id="'+g.id+'">Excluir meta</button>'));
+}
+function goalMove(id,sign){
+  var g=finGet().goals.find(function(x){return x.id===id});if(!g)return;
+  var amt=parseMoney($("#gd-amt").value),err=$("#gd-err");
+  if(amt<=0){err.textContent="Informe um valor maior que zero.";return}
+  if(sign<0&&amt>goalSaved(g)){err.textContent="Você só tem "+fm(goalSaved(g))+" guardado nesta meta.";return}
+  g.deposits=g.deposits||[];g.deposits.push({id:uid(),amount:sign*amt,date:todayISO()});
+  closeSheet();finSave();toast(sign>0?"Valor guardado.":"Retirada registrada.");
+}
+function finExport(){
+  var blob=new Blob([JSON.stringify({app:"racha-casa-financas",v:1,data:finGet()})],{type:"application/json"});
+  var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="racha-financas-backup.json";document.body.appendChild(a);a.click();document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(a.href)},2000);
+}
+function finImport(){
+  var inp=document.createElement("input");inp.type="file";inp.accept="application/json,.json";
+  inp.onchange=function(){
+    var file=inp.files&&inp.files[0];if(!file)return;
+    var r=new FileReader();
+    r.onload=function(){
+      try{
+        var j=JSON.parse(r.result),d=j&&j.app==="racha-casa-financas"?j.data:null;
+        if(!d||!Array.isArray(d.income)||!Array.isArray(d.goals))throw new Error("x");
+        LS.set(finKey||("rc-fin-"+meKey()+"-"+me),JSON.stringify(d));fin=null;finGet();render();toast("Backup restaurado.");
+      }catch(e){toast("Esse arquivo não é um backup válido.")}
+    };
+    r.readAsText(file);
+  };
+  inp.click();
+}
+
 /* ---------- ações ---------- */
 function forgetHouse(){LS.set("rc-hid","");LS.set("rc-code","");state.hid=null;state.house=null}
 function enterCloudHouse(hid,code){
@@ -1077,6 +1264,19 @@ document.addEventListener("click",function(e){
     case "switchme":me=null;LS.set(meKey(),"");render();break;
     case "tab":ui.tab=t.getAttribute("data-tab");ui.month=null;window.scrollTo(0,0);render();break;
     case "newbill":newSheet("bill");break;
+    case "fin-month":ui.finMonth=shiftYM(finMonth(),parseInt(t.getAttribute("data-d"),10));render();break;
+    case "fin-income":incomeSheet();break;
+    case "fin-expense":expenseSheet();break;
+    case "fin-goal-new":goalNewSheet();break;
+    case "fin-goal":goalSheet(id,false);break;
+    case "goal-del":goalSheet(id,true);break;
+    case "goal-in":goalMove(id,1);break;
+    case "goal-out":goalMove(id,-1);break;
+    case "goal-del-yes":{var ff=finGet();ff.goals=ff.goals.filter(function(g){return g.id!==id});closeSheet();finSave();toast("Meta excluída.");break}
+    case "fin-del":{var ff2=finGet(),kk=t.getAttribute("data-k");if(kk!=="income"&&kk!=="expenses")return;ff2[kk]=ff2[kk].filter(function(x){return x.id!==id});finSave();toast("Removido.");break}
+    case "fin-job-del":{var ff3=finGet();ff3.jobs=ff3.jobs.filter(function(j){return j.id!==id});finSave();break}
+    case "fin-export":finExport();break;
+    case "fin-import":finImport();break;
     case "sheet-mode":newSheet(t.getAttribute("data-mode"));break;
     case "pool-open":poolSheet(id,false);break;
     case "pool-del":poolSheet(id,true);break;
